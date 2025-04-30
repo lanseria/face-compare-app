@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-cli-starter"
+dynamic = ["version"]
+description = "Python CLI Starter Template"
+readme = "README.md"
+requires-python = "<3.13"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "lanseria", email = "your-email@example.com" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+  "typer>=0.9.0",
+  "rich>=13.0.0",
+  "python-dotenv>=1.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0.0",
+]
+build = [
+  "pyinstaller>=6.3.0",
+]
+
+[project.scripts]
+cli = "python_cli_starter.main:app"
+
+# Hatchling 特定配置
+[tool.hatch.version]
+path = "src/python_cli_starter/__init__.py"
+
+# 添加 hatch 包配置
+[tool.hatch.packages.find]
+include = ["src/*"]
+src = "src"
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
