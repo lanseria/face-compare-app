@@ -39,7 +39,7 @@ pytest
 
 ```
 src/
-  python_cli_starter/
+  face_compare_app/
     __init__.py    # Package initialization
     cli.py         # CLI commands
     main.py        # App entry point
