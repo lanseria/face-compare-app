@@ -3,30 +3,54 @@
 import json
 import logging
 from typing import Any, Optional, Dict
+from pathlib import Path
+import cv2 # Import OpenCV
+import numpy as np # Import Numpy
 
-from .exceptions import InvalidInputError
+# Import custom exceptions relative to the package root
+from .exceptions import InvalidInputError, ImageLoadError
 
 logger = logging.getLogger(__name__)
 
-def load_image(image_path: str) -> Any:
+def load_image(image_path: Path) -> np.ndarray:
     """
-    Placeholder for loading an image.
-    In a real implementation, this would use libraries like OpenCV or Pillow.
-    Returns a representation of the image (e.g., numpy array) or raises ImageLoadError.
+    Loads an image from the specified path using OpenCV.
+
+    Args:
+        image_path: Path object pointing to the image file.
+
+    Returns:
+        A NumPy array representing the image in BGR format.
+
+    Raises:
+        FileNotFoundError: If the image file does not exist.
+        ImageLoadError: If the image file cannot be loaded or read by OpenCV.
     """
-    logger.debug(f"Attempting to load image: {image_path}")
-    # Simulate loading
+    absolute_path_str = str(image_path.resolve())
+    logger.debug(f"Attempting to load image: {absolute_path_str}")
+
+    if not image_path.is_file():
+        logger.error(f"Image file not found at: {absolute_path_str}")
+        # Raise FileNotFoundError which is often handled specifically in CLI
+        raise FileNotFoundError(f"No such file or directory: '{absolute_path_str}'")
+
     try:
-        # In real code: Check if file exists and is readable
-        # img = cv2.imread(image_path) or Image.open(image_path)
-        # if img is None: raise ImageLoadError(...)
-        print(f"Placeholder: Loaded image from {image_path}")
-        return f"image_data_for_{image_path}" # Return a dummy object
+        # Read the image using OpenCV
+        img = cv2.imread(absolute_path_str)
+
+        if img is None:
+            # This can happen for various reasons (corrupt file, unsupported format)
+            logger.error(f"Failed to load image using OpenCV (cv2.imread returned None): {absolute_path_str}")
+            raise ImageLoadError(f"Could not load image file: {absolute_path_str}")
+
+        logger.debug(f"Successfully loaded image {absolute_path_str} with shape {img.shape}")
+        return img
     except Exception as e:
-        logger.error(f"Failed to load image {image_path}: {e}")
-        # raise ImageLoadError(f"Could not load image: {image_path}") from e # In real code
-        # For now, just signal failure if needed by returning None or raising generic error
-        raise # Re-raise generic exception for now
+        # Catch any other unexpected errors during loading
+        logger.error(f"An unexpected error occurred while loading image {absolute_path_str}: {e}", exc_info=True)
+        # Wrap the original exception for context
+        raise ImageLoadError(f"Failed to load image {absolute_path_str}: {e}") from e
+
 
 def parse_metadata(meta_str: Optional[str]) -> Optional[Dict[str, Any]]:
     """Parses a JSON string into a dictionary."""

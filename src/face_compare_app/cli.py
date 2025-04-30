@@ -15,8 +15,8 @@ import os
 # Use relative imports assuming standard package execution
 from . import core
 from . import database
-from . import live
-from . import server
+from . import live as live_func
+from . import server as server_func
 from . import utils # Import utils
 from .exceptions import FaceCompareError, InvalidInputError # Import custom exceptions
 
@@ -86,7 +86,7 @@ def live(
     """Performs real-time face comparison against a reference image using a camera."""
     logger.info(f"CLI: Received live command with camera ID {camera} and reference '{reference}'")
     try:
-        live.run_live_comparison(camera_id=camera, reference_image_path=reference)
+        live_func.run_live_comparison(camera_id=camera, reference_image_path=reference)
         logger.info("Live comparison finished.")
     except FileNotFoundError as e:
         logger.error(f"Reference image file not found: {e}")
@@ -209,7 +209,7 @@ def server(
     """Starts the REST API server (placeholder)."""
     logger.info(f"CLI: Received server command with port={port}, workers={workers}")
     try:
-        server.start_server(port=port, workers=workers)
+        server_func.start_server(port=port, workers=workers)
         # Note: The placeholder start_server function will return immediately.
         # A real server would likely run indefinitely until stopped (e.g., Ctrl+C).
         print("\nPlaceholder server function finished. See logs for details.")
@@ -219,9 +219,5 @@ def server(
         print(f"An unexpected error occurred while trying to start the server. Check logs.")
         raise typer.Exit(code=1)
 
-
 if __name__ == "__main__":
-    # Create the main application entry point
-    # Consider moving this logic to a separate main.py or __main__.py
-    # for better structure if the application grows complex.
     app()

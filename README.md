@@ -25,7 +25,8 @@ pip install -e .
 ## Usage
 
 ```bash
-cli hello [name]
+fc hello [name]
+fc compare data/img1.jpeg data/img2.jpeg
 ```
 
 ## Development

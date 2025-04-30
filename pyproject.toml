@@ -42,7 +42,12 @@ build = [
 ]
 
 [project.scripts]
-fc = "face_compare_app.main:app"
+cli = "face_compare_app.main:app"
+
+# 添加 hatch 包配置
+[tool.hatch.packages.find]
+include = ["src/*"]
+src = "src"
 
 [tool.pytest.ini_options]
 addopts = "-ra -q"
