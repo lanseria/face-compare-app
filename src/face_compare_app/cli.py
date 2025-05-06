@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional
+from pathlib import Path
 import typer
 import sys
 import os
@@ -13,13 +14,13 @@ import os
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Use relative imports assuming standard package execution
-from . import core
-from . import database
+from . import core as core_func
+from . import database as db_func
 from . import live as live_func
 from . import server as server_func
 from . import utils # Import utils
 from .exceptions import (
-    FaceCompareError, InvalidInputError, ImageLoadError,
+    FaceCompareError, InvalidInputError, ImageLoadError, DatabaseError,
     NoFaceFoundError, MultipleFacesFoundError, ModelError, EmbeddingError
 ) # Import custom exceptions
 
@@ -59,7 +60,7 @@ def compare(
     """Compares faces found in two images and prints the similarity score."""
     logger.info(f"CLI: Received compare command for '{img1}' and '{img2}'")
     try:
-        similarity = core.compare_faces(img1, img2)
+        similarity = core_func.compare_faces(img1, img2)
         if similarity is not None:
             print(f"Similarity Score: {similarity:.4f}")
             logger.info(f"Comparison successful. Similarity: {similarity:.4f}")
@@ -89,7 +90,7 @@ def live(
     """Performs real-time face comparison against a reference image using a camera."""
     logger.info(f"CLI: Received live command with camera ID {camera} and reference '{reference}'")
 
-    if core._face_processor_instance is None:
+    if core_func._face_processor_instance is None:
         logger.error("Face processor is not available (failed to initialize?). Cannot run live comparison.")
         print("Error: Face processing engine could not be initialized. Check logs for details.")
         raise typer.Exit(code=1)
@@ -97,7 +98,7 @@ def live(
     try:
         # Call the actual live function, passing the processor instance
         live_func.run_live_comparison(
-            processor=core._face_processor_instance,
+            processor=core_func._face_processor_instance,
             camera_id=camera,
             reference_image_path=reference
             # Optional: Add CLI option for threshold and pass it here:
@@ -132,104 +133,201 @@ def live(
         print(f"An unexpected error occurred. Check logs for details: {e}")
         raise typer.Exit(code=1)
 
-
-
 @app.command()
 def insert(
-    db: str = typer.Option(..., "--db", "-d", help="Path to the feature database file (SQLite)."),
-    id: str = typer.Option(..., "--id", help="Unique ID for the user/face."),
-    name: str = typer.Option(..., "--name", "-n", help="Name of the user."),
-    image: str = typer.Option(..., "--img", "-i", help="Path to the user's face image file."),
-    meta: Optional[str] = typer.Option(None, "--meta", "-m", help="User metadata as a JSON string (e.g., '{\"dept\": \"IT\"}').")
+    # Use Path type hint for Typer to handle conversion and validation
+    db: Path = typer.Option(..., "--db", "-d", help="Path to the feature database file (SQLite). Will be created if it doesn't exist.", writable=True), # writable=True checks permissions somewhat
+    id: str = typer.Option(..., "--id", help="Unique ID for the user/face. This will be the primary key."),
+    name: str = typer.Option(..., "--name", "-n", help="Name associated with the face."),
+    image: Path = typer.Option(..., "--img", "-i", help="Path to the face image file.", exists=True, file_okay=True, readable=True), # exists=True, readable=True adds checks
+    meta: Optional[str] = typer.Option(None, "--meta", "-m", help="User metadata as a JSON string (e.g., '{\"dept\": \"IT\", \"role\": \"dev\"}').")
 ):
-    """Extracts features from an image and inserts the face info into the database."""
-    logger.info(f"CLI: Received insert command for ID='{id}', Name='{name}', DB='{db}', Image='{image}'")
+    """Extracts features from an image and inserts or replaces the face info in the database."""
+    logger.info(f"CLI: Received insert command: ID='{id}', Name='{name}', DB='{db}', Image='{image}'")
+
+    if core_func._face_processor_instance is None:
+        logger.error("Face processor is not available. Cannot extract features.")
+        print("Error: Face processing engine could not be initialized. Check logs.")
+        raise typer.Exit(code=1)
+
     try:
         # 1. Parse metadata JSON string (optional)
-        metadata_dict = utils.parse_metadata(meta) # Use the utility function
+        # This function raises InvalidInputError if JSON is malformed
+        logger.debug(f"Parsing metadata string: {meta}")
+        metadata_dict = utils.parse_metadata(meta)
+        if metadata_dict:
+            logger.debug(f"Parsed metadata: {metadata_dict}")
 
         # 2. Extract features from the image
-        logger.info(f"Extracting features for image: {image}")
-        features = core.extract_features(image) # Can raise NoFaceFoundError, ImageLoadError
+        # This function handles image loading, face detection (expecting exactly one),
+        # and embedding generation. It raises specific errors on failure.
+        logger.info(f"Extracting features from image: {image}")
+        # Pass the Path object directly to extract_features if it accepts it,
+        # otherwise convert: str(image)
+        # Let's assume extract_features handles Path object correctly (modify if needed)
+        features_bytes = core_func.extract_features(str(image)) # core.extract_features expects str path
+        logger.info(f"Successfully extracted features ({len(features_bytes)} bytes) for image: {image}")
 
         # 3. Add to database
+        # This function handles DB connection, initialization, and insertion/replacement.
         logger.info(f"Adding face to database: {db}")
-        database.add_face_to_db(
-            db_path=db,
+        db_func.add_face_to_db(
+            db_path=db, # Pass the Path object
             user_id=id,
             name=name,
-            features=features,
+            features=features_bytes,
             metadata=metadata_dict # Pass the parsed dictionary
         )
-        print(f"Successfully inserted/updated face ID '{id}' ('{name}') into database '{db}'.")
-        logger.info(f"Insertion successful for ID='{id}'.")
+        print(f"Successfully inserted/updated face ID '{id}' (Name: '{name}') into database '{db}'.")
+        logger.info(f"Database insertion successful for ID='{id}'.")
 
+    # --- Specific Error Handling ---
     except FileNotFoundError as e:
-        logger.error(f"Image file not found: {e}")
-        print(f"Error: Image file not found - {e}")
+        # This is caught if the image path provided doesn't exist *before* core.extract_features is called
+        # (Typer's exists=True check should catch this first, but good to have).
+        # Or if core.extract_features raises it for some reason (less likely if Typer checks).
+        logger.error(f"Input file not found: {e}")
+        print(f"Error: Input file not found - {e}")
         raise typer.Exit(code=1)
-    except InvalidInputError as e: # Catch bad JSON format
-        logger.error(f"Invalid metadata format: {e}", exc_info=False)
-        print(f"Error: {e}")
+    except ImageLoadError as e:
+        # Raised by core.extract_features -> utils.load_image
+        logger.error(f"Failed to load image '{image}': {e}", exc_info=False)
+        print(f"Error: Failed to load image '{image}': {e.message}")
         raise typer.Exit(code=1)
-    except FaceCompareError as e: # Catch NoFaceFound, DB errors, etc.
-        logger.error(f"Failed to insert face: {e}", exc_info=False)
+    except NoFaceFoundError as e:
+        # Raised by core.extract_features
+        logger.error(f"No face detected in image '{image}': {e}", exc_info=False)
+        print(f"Error: No face detected in image '{image}'. Cannot insert.")
+        raise typer.Exit(code=1)
+    except MultipleFacesFoundError as e:
+        # Raised by core.extract_features
+        logger.error(f"Multiple faces detected in image '{image}': {e}", exc_info=False)
+        print(f"Error: Multiple faces found in '{image}'. Please provide an image with exactly one face for insertion.")
+        raise typer.Exit(code=1)
+    except ModelError as e:
+        # Raised by core.extract_features (model loading/inference issue)
+        logger.error(f"Model error during feature extraction: {e}", exc_info=False)
+        print(f"Error: A model processing error occurred: {e.message}")
+        raise typer.Exit(code=1)
+    except EmbeddingError as e:
+        # Raised by core.extract_features
+        logger.error(f"Embedding error for image '{image}': {e}", exc_info=False)
+        print(f"Error: Failed to generate features for the face in '{image}': {e.message}")
+        raise typer.Exit(code=1)
+    except InvalidInputError as e:
+        # Raised by utils.parse_metadata
+        logger.error(f"Invalid metadata JSON provided: {e}", exc_info=False)
+        print(f"Error: Invalid format for metadata - {e.message}")
+        print("Please provide metadata as a valid JSON string, e.g., '{\"key\": \"value\"}'")
+        raise typer.Exit(code=1)
+    except DatabaseError as e:
+        # Raised by db_func.add_face_to_db
+        logger.error(f"Database error during insertion for ID '{id}': {e}", exc_info=False)
+        print(f"Error: Database operation failed - {e.message}")
+        raise typer.Exit(code=1)
+    except FaceCompareError as e:
+        # Catch any other custom errors from the package that might have been missed
+        logger.error(f"An application error occurred: {e}", exc_info=False)
         print(f"Error: {e}")
         raise typer.Exit(code=1)
     except Exception as e:
+        # Catch any truly unexpected errors
         logger.error(f"An unexpected error occurred during insertion: {e}", exc_info=True)
-        print(f"An unexpected error occurred. Check logs.")
+        print(f"An unexpected error occurred. Please check the application logs for details.")
         raise typer.Exit(code=1)
 
-
+# --- Add search command (placeholder or implementation) ---
 @app.command()
 def search(
-    db: str = typer.Option(..., "--db", "-d", help="Path to the feature database file (SQLite)."),
-    target: str = typer.Option(..., "--target", "-t", help="Path to the target face image to search for.")
+    db: Path = typer.Option(..., "--db", "-d", help="Path to the feature database file (SQLite).", exists=True, file_okay=True, readable=True),
+    image: Path = typer.Option(..., "--img", "-i", help="Path to the query face image file.", exists=True, file_okay=True, readable=True),
+    threshold: Optional[float] = typer.Option(None, "--threshold", "-t", help="Optional similarity threshold (0.0 to 1.0). Overrides default.")
 ):
-    """Searches for a similar face in the database based on the target image."""
-    logger.info(f"CLI: Received search command for target='{target}' in DB='{db}'")
-    try:
-        # 1. Extract features from the target image
-        logger.info(f"Extracting features from target image: {target}")
-        target_features = core.extract_features(target) # Can raise NoFaceFoundError, ImageLoadError
+    """Searches the database for faces similar to the face in the query image."""
+    logger.info(f"CLI: Received search command: DB='{db}', Image='{image}', Threshold='{threshold}'")
 
-        # 2. Get all faces from the database
-        logger.info(f"Loading faces from database: {db}")
-        all_faces = database.get_all_faces_from_db(db)
-
-        if not all_faces:
-            print(f"Database '{db}' is empty or does not exist.")
-            logger.warning(f"Search aborted: Database '{db}' is empty or could not be read.")
-            raise typer.Exit()
-
-        # 3. Perform the search
-        logger.info(f"Searching for matches in {len(all_faces)} database entries.")
-        best_match = core.search_similar_face(target_features, all_faces)
-
-        # 4. Report results
-        if best_match:
-            match_id, match_name, match_score = best_match
-            print("\n--- Best Match Found ---")
-            print(f"  ID:         {match_id}")
-            print(f"  Name:       {match_name}")
-            print(f"  Similarity: {match_score:.4f}")
-            logger.info(f"Search successful. Best match: ID='{match_id}', Score={match_score:.4f}")
-        else:
-            print("\nNo similar face found in the database meeting the threshold.")
-            logger.info("Search completed. No sufficiently similar face found.")
-
-    except FileNotFoundError as e:
-        logger.error(f"Target image file not found: {e}")
-        print(f"Error: Target image file not found - {e}")
+    if core_func._face_processor_instance is None:
+        logger.error("Face processor is not available. Cannot extract features for search.")
+        print("Error: Face processing engine could not be initialized. Check logs.")
         raise typer.Exit(code=1)
-    except FaceCompareError as e: # Catch NoFaceFound, DB errors, etc.
-        logger.error(f"Failed to search face: {e}", exc_info=False)
-        print(f"Error: {e}")
+
+    try:
+        # 1. Extract features from the query image
+        logger.info(f"Extracting features from query image: {image}")
+        query_features = core_func.extract_features(str(image))
+        logger.info(f"Successfully extracted features from query image.")
+
+        # 2. Load face data from the database
+        logger.info(f"Loading face database from: {db}")
+        face_database = db_func.get_all_faces_from_db(db)
+        if not face_database:
+            print(f"Database '{db}' is empty. Cannot perform search.")
+            logger.warning(f"Search skipped: Database '{db}' is empty.")
+            raise typer.Exit(code=0) # Not an error, just no data
+
+        # 3. Perform the search using core function
+        logger.info(f"Searching database ({len(face_database)} entries)...")
+        # Pass threshold if provided, otherwise core.search_similar_face uses its internal default
+        # Note: core.search_similar_face needs modification to accept an optional threshold
+        # For now, let's assume it uses a default or we modify it later.
+        # We'll need to update core.py's search_similar_face signature & logic.
+        # Let's just call it without threshold for now. It uses a hardcoded 0.5 threshold.
+        best_match = core_func.search_similar_face(
+            target_features=query_features,
+            face_database=face_database
+            # threshold=threshold # Add this if core.search_similar_face is updated
+        )
+
+        # 4. Print results
+        if best_match:
+            matched_id, matched_name, similarity_score = best_match
+            print("\n--- Best Match Found ---")
+            print(f"  ID:         {matched_id}")
+            print(f"  Name:       {matched_name}")
+            print(f"  Similarity: {similarity_score:.4f}")
+            # Optionally load and show metadata if needed:
+            # find the matching entry in face_database and parse metadata_str
+            # meta_str = next((entry[3] for entry in face_database if entry[0] == matched_id), None)
+            # if meta_str:
+            #     try:
+            #         meta_dict = json.loads(meta_str)
+            #         print(f"  Metadata:   {json.dumps(meta_dict, indent=2)}")
+            #     except json.JSONDecodeError:
+            #         print(f"  Metadata:   (Invalid JSON in DB: {meta_str})")
+
+        else:
+            print("\nNo similar face found in the database matching the criteria.")
+            logger.info("Search completed. No match found above threshold.")
+
+    # --- Error Handling specific to Search ---
+    except FileNotFoundError as e:
+        logger.error(f"Input file not found: {e}")
+        print(f"Error: Input file not found - {e}")
+        raise typer.Exit(code=1)
+    except (ImageLoadError, NoFaceFoundError, MultipleFacesFoundError, ModelError, EmbeddingError) as e:
+        # Errors during query image feature extraction
+        logger.error(f"Error processing query image '{image}': {e}", exc_info=False)
+        print(f"Error processing query image '{image}': {e.message}")
+        raise typer.Exit(code=1)
+    except DatabaseError as e:
+        # Errors during loading data from DB
+        logger.error(f"Database error during search: {e}", exc_info=False)
+        print(f"Error: Database operation failed - {e.message}")
+        raise typer.Exit(code=1)
+    except InvalidInputError as e:
+        # e.g., if target feature size mismatch in search_similar_face
+        logger.error(f"Invalid input for search: {e}", exc_info=False)
+        print(f"Error: {e.message}")
+        raise typer.Exit(code=1)
+    except FaceCompareError as e:
+        # Catch any other custom errors
+        logger.error(f"An application error occurred during search: {e}", exc_info=False)
+        print(f"Error: {e.message}")
         raise typer.Exit(code=1)
     except Exception as e:
+        # Catch any truly unexpected errors
         logger.error(f"An unexpected error occurred during search: {e}", exc_info=True)
-        print(f"An unexpected error occurred. Check logs.")
+        print(f"An unexpected error occurred. Please check the application logs for details.")
         raise typer.Exit(code=1)
 
 

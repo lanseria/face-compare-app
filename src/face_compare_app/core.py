@@ -75,7 +75,7 @@ class FaceProcessor:
         if not self._initialized:
             self._initialize() # Trigger lazy loading
         if self._app is None: # Check if initialization failed
-             raise ModelError("FaceAnalysis application is not available (initialization failed).")
+            raise ModelError("FaceAnalysis application is not available (initialization failed).")
         return self._app
 
     def get_faces(self, image: np.ndarray) -> list:
@@ -108,8 +108,8 @@ class FaceProcessor:
 
         embedding = faces[0].normed_embedding
         if embedding is None:
-             logger.error(f"Failed to generate embedding for the face in {image_path}")
-             raise EmbeddingError(f"Failed to generate embedding for the face in {image_path}")
+            logger.error(f"Failed to generate embedding for the face in {image_path}")
+            raise EmbeddingError(f"Failed to generate embedding for the face in {image_path}")
 
         logger.debug(f"Successfully extracted single face embedding for {image_path}")
         return embedding
@@ -245,8 +245,8 @@ def compare_faces(img_path1: str, img_path2: str) -> Optional[float]:
         logger.error(f"Comparison failed due to model issue: {e.message} (Code: {e.code})")
         return None
     except EmbeddingError as e:
-         logger.error(f"Comparison failed due to embedding issue: {e.message} (Code: {e.code})")
-         return None
+        logger.error(f"Comparison failed due to embedding issue: {e.message} (Code: {e.code})")
+        return None
     except FaceCompareError as e: # Catch other specific FaceCompareErrors
         logger.error(f"Comparison failed: {e.message} (Code: {e.code})")
         return None
@@ -292,8 +292,8 @@ def extract_features(image_path: str) -> bytes:
     # Let specific errors propagate up to the caller (e.g., CLI command)
     # which can then handle them (print message, exit code)
     except (FileNotFoundError, ImageLoadError, NoFaceFoundError, MultipleFacesFoundError, ModelError, EmbeddingError) as e:
-         logger.error(f"Feature extraction failed: {e}")
-         raise e # Re-raise for the caller to handle
+        logger.error(f"Feature extraction failed: {e}")
+        raise e # Re-raise for the caller to handle
     except Exception as e:
         logger.error(f"An unexpected error occurred during feature extraction: {e}", exc_info=True)
         # Wrap in a generic error or re-raise
@@ -316,8 +316,8 @@ def search_similar_face(target_features: bytes, face_database: List[Tuple[str, s
         logger.error("Face search skipped: FaceProcessor is not available.")
         return None
     if not face_database:
-         logger.warning("Face search skipped: Database is empty.")
-         return None
+        logger.warning("Face search skipped: Database is empty.")
+        return None
 
     logger.info(f"Searching for similar face among {len(face_database)} entries.")
     try:
@@ -328,9 +328,9 @@ def search_similar_face(target_features: bytes, face_database: List[Tuple[str, s
         # This depends on the model used. Let's assume 512 for buffalo_l.
         expected_dims = 512 # TODO: Make this configurable or get from model?
         if target_embedding.size != expected_dims:
-             logger.error(f"Target feature size mismatch. Expected {expected_dims}, got {target_embedding.size}.")
-             # Handle this error - maybe raise InvalidInputError?
-             raise InvalidInputError(f"Invalid target feature size ({target_embedding.size}), expected {expected_dims}.")
+            logger.error(f"Target feature size mismatch. Expected {expected_dims}, got {target_embedding.size}.")
+            # Handle this error - maybe raise InvalidInputError?
+            raise InvalidInputError(f"Invalid target feature size ({target_embedding.size}), expected {expected_dims}.")
 
 
         best_match = None
@@ -345,8 +345,8 @@ def search_similar_face(target_features: bytes, face_database: List[Tuple[str, s
                 db_embedding = np.frombuffer(db_features_bytes, dtype=np.float32)
 
                 if db_embedding.size != expected_dims:
-                     logger.warning(f"Skipping entry ID '{db_id}': Feature size mismatch (got {db_embedding.size}, expected {expected_dims}).")
-                     continue # Skip this entry
+                    logger.warning(f"Skipping entry ID '{db_id}': Feature size mismatch (got {db_embedding.size}, expected {expected_dims}).")
+                    continue # Skip this entry
 
                 # Calculate similarity using the static method
                 similarity = FaceProcessor._cosine_similarity(target_embedding, db_embedding)
@@ -373,8 +373,8 @@ def search_similar_face(target_features: bytes, face_database: List[Tuple[str, s
         return best_match
 
     except InvalidInputError as e: # Catch the specific error from size check
-         logger.error(f"Face search failed: {e}")
-         raise e # Propagate error
+        logger.error(f"Face search failed: {e}")
+        raise e # Propagate error
     except Exception as e:
         logger.error(f"An unexpected error occurred during face search: {e}", exc_info=True)
         # Wrap in generic error

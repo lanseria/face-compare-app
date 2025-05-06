@@ -28,6 +28,15 @@ pip install -e .
 cli hello [name]
 cli compare data/img2.jpeg data/img3.jpeg
 cli live --ref data/img3.jpeg --camera-id 0
+cli insert \
+    --db data/face_db.sqlite \
+    --id img003_wxd \
+    --name "王旭东" \
+    --img data/img3.jpeg \
+    --meta '{"source": "upload", "capture_date": "2024-05-06"}'
+cli search \
+    --db data/face_db.sqlite \
+    --img data/img1.jpeg
 ```
 
 ## Development
