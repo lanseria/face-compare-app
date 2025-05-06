@@ -32,9 +32,9 @@ class ModelError(FaceCompareError):
         super().__init__(1003, f"Model Error: {message}")
 
 class EmbeddingError(FaceCompareError):
-     """Errors related to feature embedding generation."""
-     def __init__(self, message: str = "Failed to generate embedding for the detected face."):
-         super().__init__(1004, message)
+    """Errors related to feature embedding generation."""
+    def __init__(self, message: str = "Failed to generate embedding for the detected face."):
+        super().__init__(1004, message)
 
 
 class DatabaseError(FaceCompareError):
@@ -48,4 +48,4 @@ class InvalidInputError(FaceCompareError):
     """Error for invalid user input (e.g., bad JSON)."""
     # Define specific codes if needed
     def __init__(self, message: str):
-         super().__init__(3000, f"Invalid Input: {message}")
+        super().__init__(3000, f"Invalid Input: {message}")

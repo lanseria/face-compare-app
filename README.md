@@ -27,6 +27,7 @@ pip install -e .
 ```bash
 cli hello [name]
 cli compare data/img2.jpeg data/img3.jpeg
+cli live --ref data/img3.jpeg --camera-id 0
 ```
 
 ## Development

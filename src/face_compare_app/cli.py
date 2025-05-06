@@ -18,7 +18,10 @@ from . import database
 from . import live as live_func
 from . import server as server_func
 from . import utils # Import utils
-from .exceptions import FaceCompareError, InvalidInputError # Import custom exceptions
+from .exceptions import (
+    FaceCompareError, InvalidInputError, ImageLoadError,
+    NoFaceFoundError, MultipleFacesFoundError, ModelError, EmbeddingError
+) # Import custom exceptions
 
 # --- Logger Configuration ---
 # Basic configuration for demonstration. Consider using a more robust setup (e.g., file logging).
@@ -85,21 +88,50 @@ def live(
 ):
     """Performs real-time face comparison against a reference image using a camera."""
     logger.info(f"CLI: Received live command with camera ID {camera} and reference '{reference}'")
+
+    if core._face_processor_instance is None:
+        logger.error("Face processor is not available (failed to initialize?). Cannot run live comparison.")
+        print("Error: Face processing engine could not be initialized. Check logs for details.")
+        raise typer.Exit(code=1)
+
     try:
-        live_func.run_live_comparison(camera_id=camera, reference_image_path=reference)
-        logger.info("Live comparison finished.")
+        # Call the actual live function, passing the processor instance
+        live_func.run_live_comparison(
+            processor=core._face_processor_instance,
+            camera_id=camera,
+            reference_image_path=reference
+            # Optional: Add CLI option for threshold and pass it here:
+            # similarity_threshold=threshold_value
+        )
+        logger.info("Live comparison finished successfully.")
+        print("\nLive comparison finished.")
+
+    # Handle errors specific to reference image processing or initial setup
     except FileNotFoundError as e:
         logger.error(f"Reference image file not found: {e}")
         print(f"Error: Reference image not found - {e}")
         raise typer.Exit(code=1)
+    except (ImageLoadError, NoFaceFoundError, MultipleFacesFoundError, ModelError, EmbeddingError) as e:
+        # These errors come from processing the reference image via get_single_face_embedding
+        logger.error(f"Error processing reference image '{reference}': {e}", exc_info=False)
+        print(f"Error processing reference image: {e}")
+        raise typer.Exit(code=1)
+    # Handle camera opening error
+    except RuntimeError as e:
+        logger.error(f"Camera runtime error: {e}")
+        print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    # Handle other generic comparison errors
     except FaceCompareError as e:
         logger.error(f"Live comparison error: {e}", exc_info=False)
         print(f"Error: {e}")
         raise typer.Exit(code=1)
+    # Catch unexpected errors during the live loop or setup
     except Exception as e:
         logger.error(f"An unexpected error occurred during live comparison: {e}", exc_info=True)
-        print(f"An unexpected error occurred. Check logs.")
+        print(f"An unexpected error occurred. Check logs for details: {e}")
         raise typer.Exit(code=1)
+
 
 
 @app.command()
