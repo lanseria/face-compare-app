@@ -77,10 +77,10 @@ def add_face_to_db(db_path: Path, user_id: str, name: str, features: bytes, meta
             )
             conn.commit()
             if cursor.rowcount > 0:
-                 logger.info(f"Successfully added/updated face ID='{user_id}' in the database '{db_path_str}'.")
+                logger.info(f"Successfully added/updated face ID='{user_id}' in the database '{db_path_str}'.")
             else:
-                 # Should not happen with INSERT OR REPLACE unless there's a weird issue
-                 logger.warning(f"No rows were affected when adding/updating face ID='{user_id}' in '{db_path_str}'.")
+                # Should not happen with INSERT OR REPLACE unless there's a weird issue
+                logger.warning(f"No rows were affected when adding/updating face ID='{user_id}' in '{db_path_str}'.")
 
     except sqlite3.Error as e:
         logger.error(f"Error adding/updating face ID='{user_id}' to database {db_path_str}: {e}")
@@ -116,6 +116,34 @@ def get_all_faces_from_db(db_path: Path) -> List[Tuple[str, str, bytes, Optional
         logger.error(f"Unexpected error retrieving faces from {db_path_str}: {e}", exc_info=True)
         raise DatabaseError(f"Unexpected error retrieving faces: {e}") from e
 
+def get_face_features_by_id(db_path: Path, user_id: str) -> Optional[bytes]:
+    """Retrieves the feature blob for a specific user ID."""
+    db_path_str = str(db_path)
+    logger.debug(f"Attempting to retrieve features for ID='{user_id}' from {db_path_str}")
+    try:
+        # Ensure DB exists, even if empty
+        initialize_db(db_path)
+
+        with _get_connection(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT features FROM faces WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                features = row['features']
+                logger.debug(f"Found features for ID='{user_id}' ({len(features)} bytes).")
+                return features # Return bytes directly
+            else:
+                logger.warning(f"No face record found for ID='{user_id}' in {db_path_str}.")
+                return None
+    except sqlite3.Error as e:
+        logger.error(f"Error retrieving features for ID='{user_id}' from {db_path_str}: {e}")
+        # Propagate as DatabaseError for consistency in API layer? Or handle here?
+        # Let's raise for now, the API can catch it.
+        raise DatabaseError(f"Could not retrieve features for ID '{user_id}': {e}") from e
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving features for ID='{user_id}' from {db_path_str}: {e}", exc_info=True)
+        raise DatabaseError(f"Unexpected error retrieving features: {e}") from e
+    
 # Potential additions for the future (not strictly required by the request):
 # - Function to delete a face by ID
 # - Function to get a single face by ID

@@ -395,20 +395,23 @@ def live_search(
 
 @app.command()
 def server(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host address to bind the server to."),
     port: int = typer.Option(8080, "--port", "-p", help="Port number for the API server."),
-    workers: int = typer.Option(4, "--workers", "-w", help="Number of worker processes for the server.")
+    workers: int = typer.Option(1, "--workers", "-w", help="Number of worker processes (set > 1 for production)."), # Default to 1 worker for simplicity/dev
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (for development only).") # Add reload flag
 ):
-    """Starts the REST API server (placeholder)."""
-    logger.info(f"CLI: Received server command with port={port}, workers={workers}")
+    """Starts the REST API server using Uvicorn."""
+    logger.info(f"CLI: Received server command: Host={host}, Port={port}, Workers={workers}, Reload={reload}")
     try:
-        server_func.start_server(port=port, workers=workers)
-        # Note: The placeholder start_server function will return immediately.
-        # A real server would likely run indefinitely until stopped (e.g., Ctrl+C).
-        print("\nPlaceholder server function finished. See logs for details.")
-        logger.info("Placeholder server function execution completed.")
+        # Call the updated start_server function from server.py
+        server_func.start_server(host=host, port=port, workers=workers, reload=reload)
+        # server_func.start_server now blocks until server stops,
+        # so messages after this might not print until shutdown.
+        logger.info("Server process finished.")
+        print("\nServer stopped.")
     except Exception as e:
-        logger.error(f"Failed to start server (placeholder): {e}", exc_info=True)
-        print(f"An unexpected error occurred while trying to start the server. Check logs.")
+        logger.error(f"Failed to start or run the server: {e}", exc_info=True)
+        print(f"\nError: Failed to start or run the server: {e}")
         raise typer.Exit(code=1)
 
 if __name__ == "__main__":

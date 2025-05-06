@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Live Compare Test</title>
+  <style>
+    body {
+      font-family: sans-serif;
+    }
+
+    #video {
+      border: 1px solid black;
+      transform: scaleX(-1);
+      /* Mirror view */
+    }
+
+    #status {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+
+    .match {
+      color: green;
+    }
+
+    .no-match {
+      color: red;
+    }
+
+    .other {
+      color: orange;
+    }
+
+    .error {
+      color: darkred;
+      background-color: #fee;
+      padding: 5px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Live Face Comparison Test</h1>
+  <div>
+    <label for="refId">Reference ID:</label>
+    <input type="text" id="refId" value="img003_zc">
+    <button id="connectBtn">Connect & Start</button>
+    <button id="disconnectBtn" disabled>Disconnect</button>
+  </div>
+  <video id="video" width="640" height="480" autoplay playsinline></video>
+  <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+  <div id="status">Status: Disconnected</div>
+  <pre id="messages" style="max-height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 5px;"></pre>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const refIdInput = document.getElementById('refId');
+    const statusDiv = document.getElementById('status');
+    const messagesDiv = document.getElementById('messages');
+
+    let websocket = null;
+    let stream = null;
+    let intervalId = null;
+    const frameInterval = 100; // ms - How often to send frames (adjust based on performance)
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+        video.srcObject = stream;
+        statusDiv.textContent = 'Status: Camera started. Ready to connect.';
+        statusDiv.className = 'other';
+        return true;
+      } catch (err) {
+        console.error("Error accessing camera: ", err);
+        statusDiv.textContent = `Status: ERROR starting camera - ${err.message}`;
+        statusDiv.className = 'error';
+        return false;
+      }
+    }
+
+    function connectWebSocket() {
+      const refId = refIdInput.value.trim();
+      if (!refId) {
+        alert("Please enter a Reference ID.");
+        return;
+      }
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        console.log("Already connected.");
+        return;
+      }
+
+      const wsUrl = `ws://${window.location.host}/api/v1/live/ws?reference_id=${encodeURIComponent(refId)}`;
+      websocket = new WebSocket(wsUrl);
+      statusDiv.textContent = `Status: Connecting to ${wsUrl}...`;
+      statusDiv.className = 'other';
+      messagesDiv.textContent = ''; // Clear previous messages
+
+      websocket.onopen = () => {
+        console.log("WebSocket Connected");
+        statusDiv.textContent = `Status: Connected (Ref ID: ${refId}). Sending frames...`;
+        statusDiv.className = 'match'; // Use green for connected
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        refIdInput.disabled = true;
+        startSendingFrames();
+      };
+
+      websocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log("Message from server: ", data);
+          displayStatus(data);
+          logMessage(data);
+        } catch (e) {
+          console.error("Failed to parse message or invalid message format:", event.data, e);
+          logMessage({ error: "Received invalid message", data: event.data });
+          statusDiv.textContent = 'Status: Received invalid message from server.';
+          statusDiv.className = 'error';
+        }
+      };
+
+      websocket.onerror = (error) => {
+        console.error("WebSocket Error: ", error);
+        statusDiv.textContent = 'Status: WebSocket Error (check console)';
+        statusDiv.className = 'error';
+        logMessage({ error: "WebSocket Error", details: error });
+        stopSendingFrames();
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        refIdInput.disabled = false;
+      };
+
+      websocket.onclose = (event) => {
+        console.log("WebSocket Disconnected:", event.reason, event.code);
+        statusDiv.textContent = `Status: Disconnected - ${event.reason || 'Connection closed'} (Code: ${event.code})`;
+        statusDiv.className = event.wasClean ? 'other' : 'error';
+        logMessage({ event: "WebSocket Closed", code: event.code, reason: event.reason, wasClean: event.wasClean });
+        stopSendingFrames();
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        refIdInput.disabled = false;
+        websocket = null;
+      };
+    }
+
+    function disconnectWebSocket() {
+      if (websocket) {
+        websocket.close(1000, "User disconnected"); // Normal closure
+      }
+      stopSendingFrames();
+    }
+
+    function startSendingFrames() {
+      if (!stream || !websocket || websocket.readyState !== WebSocket.OPEN) {
+        console.warn("Cannot send frames: stream or WebSocket not ready.");
+        return;
+      }
+      if (intervalId) clearInterval(intervalId); // Clear existing interval if any
+
+      intervalId = setInterval(() => {
+        if (websocket && websocket.readyState === WebSocket.OPEN && video.readyState >= video.HAVE_CURRENT_DATA) {
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          // Encode as JPEG (adjust quality 0.0-1.0) or PNG
+          canvas.toBlob((blob) => {
+            if (blob && websocket && websocket.readyState === WebSocket.OPEN) {
+              // console.log(`Sending frame blob: ${blob.size} bytes`);
+              websocket.send(blob);
+            }
+          }, 'image/jpeg', 0.8); // Send JPEG with 80% quality
+        } else if (websocket && websocket.readyState !== WebSocket.OPEN) {
+          console.log("WebSocket closed or closing, stopping frame send loop.");
+          stopSendingFrames(); // Stop if WS closes
+        }
+      }, frameInterval);
+      console.log("Started sending frames interval.");
+    }
+
+    function stopSendingFrames() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+        console.log("Stopped sending frames interval.");
+      }
+    }
+
+    function displayStatus(data) {
+      let statusText = `Status: Ref ID=${data.reference_id}, `;
+      let statusClass = 'other';
+      if (data.status === 'match_found') {
+        statusText += `MATCH FOUND (Sim: ${data.similarity.toFixed(3)})`;
+        statusClass = 'match';
+      } else if (data.status === 'no_match') {
+        statusText += `No Match (Sim: ${data.similarity.toFixed(3)})`;
+        statusClass = 'no-match';
+      } else if (data.status === 'no_face') {
+        statusText += 'No face detected';
+        statusClass = 'other';
+      } else if (data.status === 'multiple_faces') {
+        statusText += 'Multiple faces detected';
+        statusClass = 'other';
+      } else if (data.status === 'error') {
+        statusText += `ERROR - ${data.message || 'Unknown processing error'}`;
+        statusClass = 'error';
+      } else {
+        statusText += `Unknown status: ${data.status}`;
+        statusClass = 'other';
+      }
+      statusDiv.textContent = statusText;
+      statusDiv.className = statusClass;
+    }
+
+    function logMessage(data) {
+      const time = new Date().toLocaleTimeString();
+      messagesDiv.textContent += `${time}: ${JSON.stringify(data)}\n`;
+      messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll
+    }
+
+    // Initialization
+    connectBtn.onclick = () => {
+      startCamera().then(success => {
+        if (success) connectWebSocket();
+      });
+    };
+    disconnectBtn.onclick = disconnectWebSocket;
+
+    // Attempt to start camera on load (optional)
+    // startCamera();
+
+  </script>
+</body>
+
+</html>

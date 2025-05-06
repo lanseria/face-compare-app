@@ -1,4 +1,4 @@
-# Python CLI Starter Template
+# Face Compare App
 
 A minimal Python command-line application template using Typer and Rich.
 
@@ -39,6 +39,7 @@ cli search \
     --img data/img4.jpeg
 cli live-search --camera-id 0 --db data/face_db.sqlite
 cli live-search -c 1 -d data/face_db.sqlite -t 0.65
+cli server --port 8080
 ```
 
 ## Development
