@@ -87,8 +87,8 @@ class FaceProcessor:
             # You might want to add checks here if embeddings are missing, etc.
             for face in faces:
                 if face.normed_embedding is None:
-                     logger.warning(f"Detected face (bbox: {face.bbox}) has no embedding.")
-                     # Decide how to handle this - raise error? Filter out?
+                    logger.warning(f"Detected face (bbox: {face.bbox}) has no embedding.")
+                    # Decide how to handle this - raise error? Filter out?
             return faces # Return the list of Face objects from insightface
         except Exception as e:
             logger.error(f"Face detection/embedding failed: {e}", exc_info=True)

@@ -5,6 +5,7 @@
     "dotenv",
     "genai",
     "imdecode",
-    "imwrite"
+    "imwrite",
+    "ndarray"
   ]
 }
