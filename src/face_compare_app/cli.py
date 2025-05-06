@@ -331,6 +331,68 @@ def search(
         raise typer.Exit(code=1)
 
 
+# --- New Live Search Command ---
+@app.command("live-search")
+def live_search(
+    camera: int = typer.Option(0, "--camera-id", "-c", help="ID of the camera device to use."),
+    db: Path = typer.Option(..., "--db", "-d", help="Path to the feature database file (SQLite).", exists=True, file_okay=True, readable=True),
+    threshold: Optional[float] = typer.Option(None, "--threshold", "-t", help=f"Optional similarity threshold (0.0 to 1.0). Default: {live_func.SIMILARITY_THRESHOLD}")
+):
+    """Performs real-time face detection and searches faces against a database using a camera."""
+    logger.info(f"CLI: Received live-search command: CameraID={camera}, DB='{db}', Threshold={threshold}")
+
+    if core_func._face_processor_instance is None:
+        logger.error("Face processor is not available. Cannot run live search.")
+        print("Error: Face processing engine could not be initialized. Check logs.")
+        raise typer.Exit(code=1)
+
+    # Use default threshold from live module if not provided
+    sim_threshold = threshold if threshold is not None else live_func.SIMILARITY_THRESHOLD
+    if not (0.0 <= sim_threshold <= 1.0):
+        logger.error(f"Invalid threshold value: {sim_threshold}. Must be between 0.0 and 1.0.")
+        print(f"Error: Threshold must be between 0.0 and 1.0, got {sim_threshold}")
+        raise typer.Exit(code=1)
+
+    try:
+        # Call the actual live search function from the live module
+        live_func.run_live_search(
+            processor=core_func._face_processor_instance,
+            camera_id=camera,
+            db_path=db,
+            similarity_threshold=sim_threshold
+        )
+        logger.info("Live search finished successfully.")
+        print("\nLive search finished.")
+
+    # --- Specific Error Handling ---
+    except DatabaseError as e:
+        # Raised by run_live_search if DB loading fails
+        logger.error(f"Database error during live search setup: {e}", exc_info=False)
+        print(f"Error: Database operation failed - {e.message}")
+        raise typer.Exit(code=1)
+    except RuntimeError as e:
+        # Raised by run_live_search if camera fails
+        logger.error(f"Camera runtime error: {e}")
+        print(f"Error: {e}")
+        raise typer.Exit(code=1)
+    except ModelError as e:
+        # Can be raised by processor.get_faces within the loop
+        logger.error(f"Model error during live search: {e}", exc_info=False)
+        print(f"Error: A model processing error occurred: {e.message}")
+        # Might not exit immediately if caught inside loop, but good to catch here too
+        raise typer.Exit(code=1)
+    except FaceCompareError as e:
+        # Catch any other custom errors
+        logger.error(f"An application error occurred during live search: {e}", exc_info=False)
+        print(f"Error: {e.message}")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        # Catch any truly unexpected errors
+        logger.error(f"An unexpected error occurred during live search: {e}", exc_info=True)
+        print(f"An unexpected error occurred. Please check the application logs for details.")
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def server(
     port: int = typer.Option(8080, "--port", "-p", help="Port number for the API server."),
