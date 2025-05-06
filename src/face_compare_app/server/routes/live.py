@@ -34,7 +34,7 @@ LIVE_SEARCH_THRESHOLD = 0.55
 EXPECTED_EMBEDDING_DIM = 512 # TODO: Get from model if possible
 SEND_NO_FACE_UPDATES = False # Control if "no_face" messages are sent
 SEND_NO_MATCH_UPDATES = False # Control if "no_match" messages are sent (for live search)
-FRAME_PROCESSING_INTERVAL = 0.05 # Minimum seconds between processing frames (controls rate)
+FRAME_PROCESSING_INTERVAL = 1 # Minimum seconds between processing frames (controls rate)
 
 
 async def process_frame_common(

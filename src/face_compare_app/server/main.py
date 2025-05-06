@@ -9,8 +9,10 @@ from fastapi.templating import Jinja2Templates # Import Jinja2Templates
 
 # Import routers from the routes module
 from .routes import compare, faces, search, live
+from .routes.live import live_search_db
 from .. import core as core_func # Import core module
 from ..core import FaceProcessor # Import the class
+from .dependencies import get_database_path # Import the dependency function
 from ..exceptions import ModelError # Import ModelError
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.critical(f"CRITICAL - Unexpected Error during startup lifespan phase: {e}", exc_info=True)
         app.state.face_processor = None
+    # --- Pre-load search DB ---
+    logger.info("Pre-loading search database...")
+    try:
+        # Get the database path using the dependency logic
+        # NOTE: Cannot use Depends() here, call the function directly if simple
+        # Or pass config/path via app state if more complex
+        db_path = get_database_path() # Make sure this function is accessible
+        live_search_db.load(db_path)
+        logger.info(f"Pre-loaded live search DB: {len(live_search_db.embeddings)} faces in {live_search_db.load_time:.3f}s.")
+    except Exception as db_load_err:
+        logger.error(f"Failed to pre-load search DB during startup: {db_load_err}", exc_info=True)
+        # Decide how to handle: continue without search? fail startup?
+        # For now, search DB might remain unloaded or partially loaded.
+    
     # --- Lifespan execution pauses ---
     yield
     # --- Shutdown logic ---
