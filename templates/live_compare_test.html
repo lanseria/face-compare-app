@@ -8,12 +8,35 @@
       font-family: sans-serif;
     }
 
-    #video {
+    /* --- ADDED FOR VIDEO CONTAINER AND OVERLAY --- */
+    #videoContainer {
+      position: relative;
+      /* For positioning the overlay */
+      width: 640px;
+      height: 480px;
       border: 1px solid black;
+    }
+
+    #video {
+      display: block;
+      /* Remove extra space below video */
+      width: 100%;
+      height: 100%;
       transform: scaleX(-1);
       /* Mirror view */
     }
 
+    #overlayCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      /* Allows clicks to go through to video if needed */
+    }
+
+    /* --- END ADDED --- */
     #status {
       margin-top: 10px;
       font-weight: bold;
@@ -47,15 +70,22 @@
     <button id="connectBtn">Connect & Start</button>
     <button id="disconnectBtn" disabled>Disconnect</button>
   </div>
-  <video id="video" width="640" height="480" autoplay playsinline></video>
-  <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+  <!-- --- MODIFIED VIDEO/CANVAS STRUCTURE --- -->
+  <div id="videoContainer">
+    <video id="video" width="640" height="480" autoplay playsinline></video>
+    <canvas id="overlayCanvas" width="640" height="480"></canvas>
+  </div>
+  <canvas id="snapshotCanvas" width="640" height="480" style="display:none;"></canvas> <!-- For sending frames -->
+  <!-- --- END MODIFIED --- -->
   <div id="status">Status: Disconnected</div>
   <pre id="messages" style="max-height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 5px;"></pre>
 
   <script>
     const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const context = canvas.getContext('2d');
+    const snapshotCanvas = document.getElementById('snapshotCanvas'); // For creating blob
+    const snapshotContext = snapshotCanvas.getContext('2d');
+    const overlayCanvas = document.getElementById('overlayCanvas'); // For drawing boxes
+    const overlayContext = overlayCanvas.getContext('2d');
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
     const refIdInput = document.getElementById('refId');
@@ -64,8 +94,10 @@
 
     let websocket = null;
     let stream = null;
-    let intervalId = null;
-    const frameInterval = 100; // ms - How often to send frames (adjust based on performance)
+    let sendIntervalId = null; // Renamed from intervalId
+    let drawIntervalId = null; // For drawing loop
+    const frameInterval = 1000;
+    let lastMessageData = null; // To store data for drawing
 
     async function startCamera() {
       try {
@@ -73,11 +105,13 @@
         video.srcObject = stream;
         statusDiv.textContent = 'Status: Camera started. Ready to connect.';
         statusDiv.className = 'other';
+        startDrawingLoop(); // Start the drawing loop
         return true;
       } catch (err) {
         console.error("Error accessing camera: ", err);
         statusDiv.textContent = `Status: ERROR starting camera - ${err.message}`;
         statusDiv.className = 'error';
+        stopDrawingLoop();
         return false;
       }
     }
@@ -97,12 +131,13 @@
       websocket = new WebSocket(wsUrl);
       statusDiv.textContent = `Status: Connecting to ${wsUrl}...`;
       statusDiv.className = 'other';
-      messagesDiv.textContent = ''; // Clear previous messages
+      messagesDiv.textContent = '';
+      lastMessageData = null; // Clear any previous drawing data
 
       websocket.onopen = () => {
         console.log("WebSocket Connected");
         statusDiv.textContent = `Status: Connected (Ref ID: ${refId}). Sending frames...`;
-        statusDiv.className = 'match'; // Use green for connected
+        statusDiv.className = 'match';
         connectBtn.disabled = true;
         disconnectBtn.disabled = false;
         refIdInput.disabled = true;
@@ -113,13 +148,15 @@
         try {
           const data = JSON.parse(event.data);
           console.log("Message from server: ", data);
-          displayStatus(data);
+          lastMessageData = data; // Store for drawing loop
+          displayStatus(data); // Update text status
           logMessage(data);
         } catch (e) {
           console.error("Failed to parse message or invalid message format:", event.data, e);
           logMessage({ error: "Received invalid message", data: event.data });
           statusDiv.textContent = 'Status: Received invalid message from server.';
           statusDiv.className = 'error';
+          lastMessageData = null;
         }
       };
 
@@ -132,6 +169,7 @@
         connectBtn.disabled = false;
         disconnectBtn.disabled = true;
         refIdInput.disabled = false;
+        lastMessageData = null;
       };
 
       websocket.onclose = (event) => {
@@ -144,14 +182,16 @@
         disconnectBtn.disabled = true;
         refIdInput.disabled = false;
         websocket = null;
+        lastMessageData = null;
       };
     }
 
     function disconnectWebSocket() {
       if (websocket) {
-        websocket.close(1000, "User disconnected"); // Normal closure
+        websocket.close(1000, "User disconnected");
       }
       stopSendingFrames();
+      // Don't stop drawing loop here, it clears itself based on lastMessageData
     }
 
     function startSendingFrames() {
@@ -159,37 +199,114 @@
         console.warn("Cannot send frames: stream or WebSocket not ready.");
         return;
       }
-      if (intervalId) clearInterval(intervalId); // Clear existing interval if any
+      if (sendIntervalId) clearInterval(sendIntervalId);
 
-      intervalId = setInterval(() => {
+      sendIntervalId = setInterval(() => {
         if (websocket && websocket.readyState === WebSocket.OPEN && video.readyState >= video.HAVE_CURRENT_DATA) {
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          // Encode as JPEG (adjust quality 0.0-1.0) or PNG
-          canvas.toBlob((blob) => {
+          snapshotContext.drawImage(video, 0, 0, snapshotCanvas.width, snapshotCanvas.height);
+          snapshotCanvas.toBlob((blob) => {
             if (blob && websocket && websocket.readyState === WebSocket.OPEN) {
-              // console.log(`Sending frame blob: ${blob.size} bytes`);
               websocket.send(blob);
             }
-          }, 'image/jpeg', 0.8); // Send JPEG with 80% quality
+          }, 'image/jpeg', 0.8);
         } else if (websocket && websocket.readyState !== WebSocket.OPEN) {
           console.log("WebSocket closed or closing, stopping frame send loop.");
-          stopSendingFrames(); // Stop if WS closes
+          stopSendingFrames();
         }
       }, frameInterval);
       console.log("Started sending frames interval.");
     }
 
     function stopSendingFrames() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
+      if (sendIntervalId) {
+        clearInterval(sendIntervalId);
+        sendIntervalId = null;
         console.log("Stopped sending frames interval.");
       }
     }
 
-    function displayStatus(data) {
-      let statusText = `Status: Ref ID=${data.reference_id}, `;
+    // --- DRAWING LOGIC ---
+    function startDrawingLoop() {
+      if (drawIntervalId) cancelAnimationFrame(drawIntervalId); // Clear previous animation frame
+      function draw() {
+        overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); // Clear canvas
+
+        if (lastMessageData) {
+          let boxesToDraw = [];
+          let mainStatus = lastMessageData.status;
+
+          if (mainStatus === 'multiple_faces' && lastMessageData.all_detection_boxes) {
+            boxesToDraw = lastMessageData.all_detection_boxes;
+          } else if (lastMessageData.detection_box) { // For match_found, no_match, etc.
+            boxesToDraw.push(lastMessageData.detection_box);
+          }
+
+          boxesToDraw.forEach(box => {
+            drawBoundingBox(box, mainStatus, lastMessageData);
+          });
+        }
+        drawIntervalId = requestAnimationFrame(draw); // Request next frame
+      }
+      draw(); // Start the loop
+    }
+
+    function stopDrawingLoop() {
+      if (drawIntervalId) {
+        cancelAnimationFrame(drawIntervalId);
+        drawIntervalId = null;
+        overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); // Clear canvas
+      }
+    }
+
+    function drawBoundingBox(box, status, data) {
+      if (!box || box.length !== 4) return;
+
+      // Mirror X coordinates because video is mirrored (transform: scaleX(-1))
+      const canvasWidth = overlayCanvas.width;
+      const x1 = canvasWidth - box[2]; // Mirrored x1 = width - original x2
+      const y1 = box[1];
+      const x2 = canvasWidth - box[0]; // Mirrored x2 = width - original x1
+      const y2 = box[3];
+      const width = x2 - x1;
+      const height = y2 - y1;
+
+      let color = 'orange'; // Default
+      let label = 'Detected';
+
+      if (status === 'match_found') {
+        color = 'lime';
+        label = `MATCH (${data.similarity.toFixed(2)})`;
+      } else if (status === 'no_match') {
+        color = 'red';
+        label = `NO MATCH (${data.similarity.toFixed(2)})`;
+      } else if (status === 'multiple_faces') {
+        color = 'blue'; // Different color for multiple faces
+        label = 'Face';
+      } else if (status === 'error' && data.message && data.message.includes("embedding")) {
+        color = 'purple';
+        label = 'Emb Error';
+      }
+
+
+      overlayContext.strokeStyle = color;
+      overlayContext.lineWidth = 2;
+      overlayContext.strokeRect(x1, y1, width, height);
+
+      // Draw label
+      overlayContext.fillStyle = color;
+      const textMeasure = overlayContext.measureText(label);
+      overlayContext.fillRect(x1, y1 - 20, textMeasure.width + 8, 20);
+      overlayContext.fillStyle = 'black';
+      overlayContext.font = '14px sans-serif';
+      overlayContext.fillText(label, x1 + 4, y1 - 5);
+    }
+    // --- END DRAWING LOGIC ---
+
+
+    function displayStatus(data) { // Update text status only
+      let statusText = `Status: Ref ID=${data.reference_id || 'N/A'}, `;
       let statusClass = 'other';
+
       if (data.status === 'match_found') {
         statusText += `MATCH FOUND (Sim: ${data.similarity.toFixed(3)})`;
         statusClass = 'match';
@@ -198,16 +315,13 @@
         statusClass = 'no-match';
       } else if (data.status === 'no_face') {
         statusText += 'No face detected';
-        statusClass = 'other';
       } else if (data.status === 'multiple_faces') {
         statusText += 'Multiple faces detected';
-        statusClass = 'other';
       } else if (data.status === 'error') {
         statusText += `ERROR - ${data.message || 'Unknown processing error'}`;
         statusClass = 'error';
       } else {
         statusText += `Unknown status: ${data.status}`;
-        statusClass = 'other';
       }
       statusDiv.textContent = statusText;
       statusDiv.className = statusClass;
@@ -216,10 +330,9 @@
     function logMessage(data) {
       const time = new Date().toLocaleTimeString();
       messagesDiv.textContent += `${time}: ${JSON.stringify(data)}\n`;
-      messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    // Initialization
     connectBtn.onclick = () => {
       startCamera().then(success => {
         if (success) connectWebSocket();
@@ -227,8 +340,14 @@
     };
     disconnectBtn.onclick = disconnectWebSocket;
 
-    // Attempt to start camera on load (optional)
-    // startCamera();
+    // Stop drawing loop if page is hidden and resume if visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopDrawingLoop();
+      } else if (stream) { // Only resume if camera was active
+        startDrawingLoop();
+      }
+    });
 
   </script>
 </body>

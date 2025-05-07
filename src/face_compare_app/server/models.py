@@ -43,6 +43,10 @@ class LiveCompareWSResponse(BaseModel):
     is_match: Optional[bool] = Field(None, description="Match status if a face is found")
     reference_id: Optional[str] = Field(None, description="The reference ID being compared against")
     message: Optional[str] = Field(None, description="Optional message (e.g., for errors)")
+    # --- ADDED FOR FACE BOXES ---
+    detection_box: Optional[List[int]] = Field(None, description="Bounding box [x1, y1, x2, y2] of the primary detected face (if status involves a single face)")
+    all_detection_boxes: Optional[List[List[int]]] = Field(None, description="List of bounding boxes if multiple_faces status")
+    # --- END ADDED ---
 
 class LiveSearchMatchDetail(BaseModel):
     """Details of a match found during live search."""

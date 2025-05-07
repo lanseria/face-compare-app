@@ -131,43 +131,66 @@ async def websocket_live_compare(
             _frame, faces, error_msg = await process_frame_common(frame_bytes, processor)
 
             response_data = LiveCompareWSResponse(status="error", message=error_msg, reference_id=reference_id) # Default to error
-
+            # Initialize response_data with common fields
+            response_data_dict = {
+                "status": "error", # Default
+                "message": error_msg,
+                "reference_id": reference_id,
+                "detection_box": None,
+                "all_detection_boxes": None
+            }
             if error_msg:
                 # Error during decoding/processing
                 pass # response_data already set
             elif not faces:
                 # No face detected
                 if SEND_NO_FACE_UPDATES:
-                    response_data = LiveCompareWSResponse(status="no_face", reference_id=reference_id)
+                    response_data_dict["status"] = "no_face"
+                    response_data_dict["message"] = None # Clear error message
                 else:
                     continue # Skip sending update
             elif len(faces) > 1:
                 # Multiple faces detected
-                response_data = LiveCompareWSResponse(status="multiple_faces", reference_id=reference_id)
+                response_data_dict["status"] = "multiple_faces"
+                response_data_dict["message"] = None # Clear error message
+                response_data_dict["all_detection_boxes"] = [f.bbox.astype(int).tolist() for f in faces if f.bbox is not None]
             else:
                 # Exactly one face detected
                 live_face = faces[0]
                 live_embedding = live_face.normed_embedding
+                bbox_list = live_face.bbox.astype(int).tolist() if live_face.bbox is not None else None
+                response_data_dict["detection_box"] = bbox_list # Set single detection box
 
                 if live_embedding is None:
                     logger.warning(f"LiveCompare WS: Detected face has no embedding for '{reference_id}'.")
-                    response_data = LiveCompareWSResponse(status="error", message="Failed to get embedding for detected face.", reference_id=reference_id)
+                    response_data_dict["status"] = "error"
+                    response_data_dict["message"] = "Failed to get embedding for detected face."
                 else:
                     # Calculate similarity
                     similarity = FaceProcessor._cosine_similarity(reference_embedding_np, live_embedding)
                     is_match = similarity >= LIVE_COMPARE_THRESHOLD
 
                     logger.debug(f"LiveCompare WS: Comparison result for '{reference_id}': Sim={similarity:.4f}, Match={is_match}")
-                    response_data = LiveCompareWSResponse(
-                        status="match_found" if is_match else "no_match",
-                        similarity=float(similarity),
-                        is_match=is_match,
-                        reference_id=reference_id
-                    )
+                    response_data_dict["status"] = "match_found" if is_match else "no_match"
+                    response_data_dict["similarity"] = float(similarity)
+                    response_data_dict["is_match"] = is_match
+                    response_data_dict["message"] = None # Clear error message
 
             # Send the response (unless skipped)
-            if response_data.status != "error" or error_msg: # Send errors always
-                await websocket.send_json(response_data.model_dump())
+            # Convert dict to Pydantic model then to dict for sending
+            final_response = LiveCompareWSResponse(**response_data_dict)
+
+            # Only send if it's an error, or if it's a status update we're configured to send
+            should_send = False
+            if final_response.status == "error" and final_response.message:
+                should_send = True
+            elif final_response.status == "no_face" and SEND_NO_FACE_UPDATES:
+                should_send = True
+            elif final_response.status in ["match_found", "no_match", "multiple_faces"]: # Always send these results
+                should_send = True
+
+            if should_send:
+                await websocket.send_json(final_response.model_dump())
 
 
     except WebSocketDisconnect:
@@ -298,30 +321,31 @@ async def websocket_live_search(
                 continue
 
 
-            # Process each detected face against the database
-            found_match_in_frame = False
+            any_match_found_in_this_frame = False # New flag for the whole frame
+            processed_faces_count = 0
+
             for face in faces:
+                processed_faces_count += 1
                 live_embedding = face.normed_embedding
                 bbox = face.bbox.astype(int).tolist() if face.bbox is not None else None
 
                 if live_embedding is None:
                     logger.warning("LiveSearch WS: Detected face has no embedding.")
-                    # Optionally send an error status for this specific face?
-                    continue # Skip this face
+                    # Optionally send an error status for this specific face here if desired
+                    # e.g., await websocket.send_json(LiveSearchWSResponse(status="error", message="Face has no embedding", detection_box=bbox).model_dump())
+                    continue
 
                 best_match_sim = -1.0
-                best_match_info: Optional[Tuple[str, str, Optional[Dict[str, Any]]]] = None # id, name, meta_dict
+                best_match_info: Optional[Tuple[str, str, Optional[Dict[str, Any]]]] = None
 
-                # Compare with database entries
                 for db_id, db_name, db_embedding_np, db_meta_dict in live_search_db.embeddings:
                     similarity = FaceProcessor._cosine_similarity(live_embedding, db_embedding_np)
                     if similarity > best_match_sim:
                         best_match_sim = similarity
                         best_match_info = (db_id, db_name, db_meta_dict)
 
-                # Check if best match meets threshold
                 if best_match_sim >= LIVE_SEARCH_THRESHOLD and best_match_info:
-                    found_match_in_frame = True
+                    any_match_found_in_this_frame = True # Set flag
                     match_id, match_name, match_meta = best_match_info
                     match_detail = LiveSearchMatchDetail(
                         face_id=match_id,
@@ -339,11 +363,23 @@ async def websocket_live_search(
                         ).model_dump()
                     )
                 else:
-                    # Face detected, but no match above threshold
+                    # Face detected, but no match above threshold for THIS face
                     if SEND_NO_MATCH_UPDATES:
                         await websocket.send_json(
                             LiveSearchWSResponse(status="no_match_found", detection_box=bbox).model_dump()
                         )
+            # ---- AFTER processing ALL faces in the current video frame ----
+            if processed_faces_count > 0 and not any_match_found_in_this_frame and not SEND_NO_MATCH_UPDATES:
+                # This condition means:
+                # 1. At least one face was processed.
+                # 2. None of them resulted in a "match_found" response being sent.
+                # 3. We are not configured to send individual "no_match_found" for each non-matching face.
+                # So, send a general "no_match_found" for the frame, perhaps without a specific box,
+                # or with the box of the first detected face if that makes sense for your UI.
+                logger.debug("LiveSearch WS: Faces detected in frame, but no matches found above threshold.")
+                await websocket.send_json(
+                    LiveSearchWSResponse(status="no_match_found", message="No matches found for detected faces in this frame.").model_dump()
+                )
 
     except WebSocketDisconnect:
         logger.info("WS disconnected: Live Search ended.")
