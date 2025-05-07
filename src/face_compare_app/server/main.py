@@ -28,42 +28,49 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # --- Lifespan Context Manager (Remains the same) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Application startup: Initializing FaceProcessor...")
-    face_processor_instance = None
+    logger.info("Application startup: Accessing pre-configured FaceProcessor...")
+    initialized_processor_instance = None
     try:
+        # The global instance should have been configured by the CLI
+        # by calling core_func.initialize_global_processor()
         if core_func._face_processor_instance is None:
-            logger.error("CRITICAL: Global FaceProcessor instance is None before startup initialization.")
-            face_processor_instance = core_func._face_processor_instance
+            # This case should ideally not happen if CLI called initialize_global_processor.
+            # It might happen if Uvicorn is run directly on main:app without the CLI wrapper.
+            logger.error(
+                "CRITICAL: Global FaceProcessor instance is None at startup. "
+                "It should have been initialized by the CLI. Attempting default initialization."
+            )
+            # Fallback to default initialization if not set by CLI (e.g., direct Uvicorn run)
+            # This ensures the app can still try to start.
+            core_func.initialize_global_processor() # Call with defaults
+
+        # Now, _face_processor_instance should exist (or an error was raised by initialize_global_processor)
+        if core_func._face_processor_instance:
+            # Trigger the actual model loading (lazy load) by accessing .app
+            _ = core_func._face_processor_instance.app
+            initialized_processor_instance = core_func._face_processor_instance
+            logger.info(
+                f"Face processor '{initialized_processor_instance.model_name}' (pre-configured by CLI or default) "
+                "is initialized and ready."
+            )
         else:
-            face_processor_instance = core_func._face_processor_instance
+            logger.critical("CRITICAL: FaceProcessor instance is still None after attempting initialization.")
+        app.state.face_processor = initialized_processor_instance
 
-        if face_processor_instance:
-            _ = face_processor_instance.app
-            logger.info(f"Face processor '{face_processor_instance.model_name}' initialized successfully.")
-        else:
-            logger.critical("CRITICAL: FaceProcessor instance could not be obtained or created.")
-
-        app.state.face_processor = face_processor_instance
-
-    except ModelError as e:
-        logger.critical(f"CRITICAL - Model Initialization Error during startup: {e}", exc_info=True)
-        app.state.face_processor = None
-    except Exception as e:
-        logger.critical(f"CRITICAL - Unexpected Error during startup lifespan phase: {e}", exc_info=True)
-        app.state.face_processor = None
-    # --- Pre-load search DB ---
-    logger.info("Pre-loading search database...")
-    try:
+        # --- Pre-load search DB ---
+        logger.info("Pre-loading search database...")
         # Get the database path using the dependency logic
         # NOTE: Cannot use Depends() here, call the function directly if simple
         # Or pass config/path via app state if more complex
         db_path = get_database_path() # Make sure this function is accessible
         live_search_db.load(db_path)
         logger.info(f"Pre-loaded live search DB: {len(live_search_db.embeddings)} faces in {live_search_db.load_time:.3f}s.")
-    except Exception as db_load_err:
-        logger.error(f"Failed to pre-load search DB during startup: {db_load_err}", exc_info=True)
-        # Decide how to handle: continue without search? fail startup?
-        # For now, search DB might remain unloaded or partially loaded.
+    except ModelError as e:
+        logger.critical(f"CRITICAL - Model Initialization Error during startup (lifespan): {e}", exc_info=True)
+        app.state.face_processor = None
+    except Exception as e:
+        logger.critical(f"CRITICAL - Unexpected Error during startup lifespan phase: {e}", exc_info=True)
+        app.state.face_processor = None
     
     # --- Lifespan execution pauses ---
     yield

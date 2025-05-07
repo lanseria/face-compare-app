@@ -32,33 +32,41 @@ class FaceProcessor:
             raise ModelError("Insightface library is not installed or loadable.")
 
         self.model_name = model_name
-        # Default to CPUExecutionProvider if none specified
         self.providers = providers or ["CPUExecutionProvider"]
-        self.config = config or {}
-        self._app: Optional[FaceAnalysis] = None # Type hint for clarity
-
-        # Initialize with lazy loading
+        self.config = config or {} # Store the full config
+        self._app: Optional[FaceAnalysis] = None
         self._initialized = False
-        logger.info(f"FaceProcessor created for model '{model_name}' with providers {self.providers} (lazy init).")
+        # Log the config being used for this instance
+        logger.info(f"FaceProcessor instance will be created with model='{model_name}', providers={self.providers}, config={self.config} (lazy init).")
 
     def _initialize(self):
-        """Lazy initialization of face analysis model"""
         if self._initialized:
             return
-        logger.info(f"Initializing InsightFace model '{self.model_name}'...")
+        logger.info(f"Initializing InsightFace model '{self.model_name}' with config {self.config}...")
         start_time = time.time()
         try:
             self._app = FaceAnalysis(
                 name=self.model_name,
                 providers=self.providers,
-                allowed_modules=['detection', 'recognition'] # Only load necessary modules
+                allowed_modules=['detection', 'recognition']
             )
-            # Apply configuration defaults if not provided
-            det_size = self.config.get("det_size", (640, 640))
+            # Use det_size and det_thresh from self.config
+            det_size_config = self.config.get("det_size") # Could be tuple or list
+            if isinstance(det_size_config, list) and len(det_size_config) == 2: # Ensure it's a pair
+                det_size = tuple(det_size_config)
+            elif isinstance(det_size_config, tuple) and len(det_size_config) == 2:
+                det_size = det_size_config
+            else: # Fallback to default if not valid
+                det_size = (640, 640)
+                if det_size_config is not None:
+                    logger.warning(f"Invalid det_size in config '{det_size_config}', using default {det_size}.")
+
+
             det_thresh = self.config.get("det_thresh", 0.5)
+
             logger.debug(f"Preparing model with det_size={det_size}, det_thresh={det_thresh}")
             self._app.prepare(
-                ctx_id=0, # Use 0 for CPU or the first GPU, -1 forces CPU but ctx_id=0 with CPUExecutionProvider should work.
+                ctx_id=0,
                 det_size=det_size,
                 det_thresh=det_thresh
             )
@@ -66,9 +74,8 @@ class FaceProcessor:
             logger.info(f"InsightFace model '{self.model_name}' initialized successfully ({time.time() - start_time:.2f}s).")
         except Exception as e:
             logger.error(f"InsightFace model initialization failed: {e}", exc_info=True)
-            # Use the specific ModelError exception
             raise ModelError(f"Model initialization failed: {str(e)}")
-
+        
     @property
     def app(self) -> FaceAnalysis:
         """Get initialized face analysis application"""
@@ -173,21 +180,64 @@ class FaceProcessor:
 # --- End of FaceProcessor Class ---
 
 
+
 # --- Module-level Instance ---
-# Create a single instance to be reused (improves performance by loading model once)
-try:
-    # Configure processor options if needed (e.g., specify GPU providers if available)
-    # providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] # Example for GPU
-    # providers = ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"] # Rank preference
-    providers = ['CPUExecutionProvider'] # Default to CPU for broader compatibility
-    # You could potentially load config from a file or env vars here
-    _face_processor_instance = FaceProcessor(model_name="buffalo_l", providers=providers)
-except Exception as e:
-    # Catch potential errors during class instantiation itself (e.g., insightface not installed)
-    logger.error(f"Fatal: Failed to create FaceProcessor instance: {e}", exc_info=True)
-    # Mark instance as None so functions using it can fail gracefully
-    _face_processor_instance = None
-# --- End Module-level Instance ---
+_face_processor_instance: Optional[FaceProcessor] = None # Initialize as None
+
+# --- NEW Function to initialize/re-initialize the global processor ---
+def initialize_global_processor(
+    model_name: str = "buffalo_l",
+    providers: Optional[List[str]] = None,
+    det_size_w: Optional[int] = None, # Separate width and height for CLI
+    det_size_h: Optional[int] = None,
+    det_thresh: Optional[float] = None,
+    force_reinitialize: bool = False
+) -> FaceProcessor:
+    """
+    Initializes or re-initializes the global _face_processor_instance.
+    Returns the initialized instance.
+    """
+    global _face_processor_instance
+    logger.info(f"Attempting to initialize global FaceProcessor (force_reinitialize={force_reinitialize}).")
+    logger.info(f"Params: model_name='{model_name}', providers={providers}, det_size_w={det_size_w}, det_size_h={det_size_h}, det_thresh={det_thresh}")
+
+
+    # Build the config dictionary for FaceProcessor
+    processor_config = {}
+    if det_size_w is not None and det_size_h is not None:
+        processor_config["det_size"] = (det_size_w, det_size_h)
+    elif det_size_w is not None or det_size_h is not None: # Only one provided
+        logger.warning("Both det_size_w and det_size_h must be provided to set det_size. Using default.")
+
+    if det_thresh is not None:
+        processor_config["det_thresh"] = det_thresh
+
+    if _face_processor_instance is None or force_reinitialize:
+        logger.info(f"Creating new FaceProcessor instance with model='{model_name}', providers={providers or ['CPUExecutionProvider']}, config={processor_config}")
+        try:
+            _face_processor_instance = FaceProcessor(
+                model_name=model_name,
+                providers=providers, # Will default to CPU if None
+                config=processor_config
+            )
+            # We don't explicitly call _initialize() here;
+            # it will be called on first use due to lazy loading within FaceProcessor.
+            # However, we can trigger it to catch errors early if desired.
+            # _ = _face_processor_instance.app # This would trigger initialization
+            logger.info("Global FaceProcessor instance configured.")
+        except Exception as e:
+            logger.error(f"Fatal: Failed to create FaceProcessor instance during global init: {e}", exc_info=True)
+            _face_processor_instance = None # Ensure it's None on failure
+            raise # Re-raise the exception so CLI knows it failed
+    else:
+        logger.info("Global FaceProcessor instance already exists and force_reinitialize is False. Using existing instance.")
+        # Optionally, you could check if params differ and warn or reinitialize
+        # For now, we assume if it exists and not forced, we use it as is.
+
+    if _face_processor_instance is None: # Double check
+        raise ModelError("Failed to get or create a FaceProcessor instance.")
+
+    return _face_processor_instance
 
 
 # --- Core API Functions ---

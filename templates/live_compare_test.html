@@ -66,7 +66,7 @@
   <h1>Live Face Comparison Test</h1>
   <div>
     <label for="refId">Reference ID:</label>
-    <input type="text" id="refId" value="img003_zc">
+    <input type="text" id="refId" value="img001_zc">
     <button id="connectBtn">Connect & Start</button>
     <button id="disconnectBtn" disabled>Disconnect</button>
   </div>
@@ -96,7 +96,7 @@
     let stream = null;
     let sendIntervalId = null; // Renamed from intervalId
     let drawIntervalId = null; // For drawing loop
-    const frameInterval = 1000;
+    const frameInterval = 100;
     let lastMessageData = null; // To store data for drawing
 
     async function startCamera() {

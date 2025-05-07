@@ -39,7 +39,13 @@ cli search \
     --img data/img4.jpeg
 cli live-search --camera-id 0 --db data/face_db.sqlite
 cli live-search -c 1 -d data/face_db.sqlite -t 0.65
-cli server --port 8080
+cli server --port 8080 --model-name buffalo_l
+cli server --port 8080 \
+    --model-name buffalo_s \
+    --provider CUDAExecutionProvider \
+    --det-size-w 320 \
+    --det-size-h 320 \
+    --det-thresh 0.4
 ```
 
 ## Development

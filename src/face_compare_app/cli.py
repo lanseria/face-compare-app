@@ -1,7 +1,7 @@
 # src/face_compare_app/cli.py
 
 import logging
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 import typer
 import sys
@@ -397,20 +397,64 @@ def live_search(
 def server(
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host address to bind the server to."),
     port: int = typer.Option(8080, "--port", "-p", help="Port number for the API server."),
-    workers: int = typer.Option(1, "--workers", "-w", help="Number of worker processes (set > 1 for production)."), # Default to 1 worker for simplicity/dev
-    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (for development only).") # Add reload flag
+    workers: int = typer.Option(1, "--workers", "-w", help="Number of worker processes (set > 1 for production)."),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (for development only)."),
+    # --- NEW MODEL PARAMETER OPTIONS ---
+    model_name: str = typer.Option(
+        "buffalo_l", "--model-name",
+        help="Name of the InsightFace model to use (e.g., 'buffalo_l', 'buffalo_s')."
+    ),
+    # Using List[str] for providers as it's a list, Typer handles multiple --provider options
+    providers: Optional[List[str]] = typer.Option(
+        None, "--provider",
+        help="Execution providers for ONNX Runtime (e.g., 'CUDAExecutionProvider', 'CPUExecutionProvider'). Can be specified multiple times. Defaults to CPU."
+    ),
+    det_size_w: Optional[int] = typer.Option(
+        None, "--det-size-w",
+        help="Detection input image width for the model (e.g., 640)."
+    ),
+    det_size_h: Optional[int] = typer.Option(
+        None, "--det-size-h",
+        help="Detection input image height for the model (e.g., 640)."
+    ),
+    det_thresh: Optional[float] = typer.Option(
+        None, "--det-thresh",
+        help="Detection threshold for the model (e.g., 0.5)."
+    )
+    # --- END NEW OPTIONS ---
 ):
-    """Starts the REST API server using Uvicorn."""
-    logger.info(f"CLI: Received server command: Host={host}, Port={port}, Workers={workers}, Reload={reload}")
+    """Starts the REST API server using Uvicorn with configurable model parameters."""
+    logger.info(f"CLI: Server command with Host={host}, Port={port}, Workers={workers}, Reload={reload}")
+    logger.info(
+        f"CLI: Model params: Name='{model_name}', Providers={providers}, "
+        f"DetSizeW={det_size_w}, DetSizeH={det_size_h}, DetThresh={det_thresh}"
+    )
+
     try:
-        # Call the updated start_server function from server.py
+        # --- Initialize the global FaceProcessor BEFORE starting Uvicorn ---
+        logger.info("CLI: Initializing global FaceProcessor with specified parameters...")
+        core_func.initialize_global_processor(
+            model_name=model_name,
+            providers=providers if providers else None, # Pass None if empty list from Typer
+            det_size_w=det_size_w,
+            det_size_h=det_size_h,
+            det_thresh=det_thresh,
+            force_reinitialize=True # Ensure it uses CLI params even if an instance somehow existed
+        )
+        logger.info("CLI: Global FaceProcessor configured.")
+
+        # Call the server start function
         server_func.start_server(host=host, port=port, workers=workers, reload=reload)
-        # server_func.start_server now blocks until server stops,
-        # so messages after this might not print until shutdown.
         logger.info("Server process finished.")
         print("\nServer stopped.")
+
+    except core_func.ModelError as e: # Catch ModelError from initialization
+        logger.error(f"CLI: Failed to initialize FaceProcessor: {e}", exc_info=True)
+        print(f"\nError: Could not initialize the face processing model: {e}")
+        print("Please check model name, providers, and ensure InsightFace dependencies are correctly installed.")
+        raise typer.Exit(code=1)
     except Exception as e:
-        logger.error(f"Failed to start or run the server: {e}", exc_info=True)
+        logger.error(f"CLI: Failed to start or run the server: {e}", exc_info=True)
         print(f"\nError: Failed to start or run the server: {e}")
         raise typer.Exit(code=1)
 
