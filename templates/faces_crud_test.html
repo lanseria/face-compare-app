@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Faces CRUD Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { margin-bottom: 30px; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        h2 { margin-top: 0; }
+        label { display: inline-block; margin-bottom: 5px; }
+        input[type="text"], input[type="file"], textarea {
+            width: 95%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px;
+        }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px; }
+        button:hover { background-color: #0056b3; }
+        pre { background-color: #f4f4f4; padding: 10px; border: 1px solid #ddd; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto;}
+        .face-item { border-bottom: 1px solid #eee; padding: 10px 0; }
+        .face-item:last-child { border-bottom: none; }
+        .actions button { font-size: 0.8em; padding: 5px 8px; margin-top: 5px;}
+    </style>
+</head>
+<body>
+
+    <h1>Faces Management (CRUD Test)</h1>
+
+    <!-- Create Face -->
+    <div class="container">
+        <h2>Create New Face Entry</h2>
+        <form id="createFaceForm">
+            <label for="createName">Name (Optional):</label>
+            <input type="text" id="createName" name="name">
+
+            <label for="createMeta">Metadata (JSON String, Optional):</label>
+            <textarea id="createMeta" name="meta" rows="3" placeholder='{"department": "R&D", "notes": "VIP"}'></textarea>
+
+            <label for="createImage">Image (Required):</label>
+            <input type="file" id="createImage" name="image" accept="image/*" required>
+
+            <button type="submit">Create Face</button>
+        </form>
+        <h3>Response:</h3>
+        <pre id="createResponse"></pre>
+    </div>
+
+    <!-- List Faces -->
+    <div class="container">
+        <h2>List All Face Entries</h2>
+        <label for="listModelFilter">Filter by Model Name (Optional):</label>
+        <input type="text" id="listModelFilter" placeholder="e.g., buffalo_s">
+        <button id="listFacesBtn">Load Faces</button>
+        <div id="facesList">
+            <!-- Face items will be populated here -->
+        </div>
+        <h3>Raw Response:</h3>
+        <pre id="listResponse"></pre>
+    </div>
+
+    <!-- Get Single Face -->
+    <div class="container">
+        <h2>Get Single Face Entry</h2>
+        <label for="getFaceId">Face ID (UUID):</label>
+        <input type="text" id="getFaceId" name="face_id">
+        <button id="getFaceBtn">Get Face</button>
+        <h3>Response:</h3>
+        <pre id="getResponse"></pre>
+    </div>
+
+    <!-- Update Face -->
+    <div class="container">
+        <h2>Update Face Entry</h2>
+        <form id="updateFaceForm">
+            <label for="updateFaceId">Face ID to Update (UUID, Required):</label>
+            <input type="text" id="updateFaceId" name="face_id_path" required>
+
+            <label for="updateName">New Name (Optional, leave blank to keep current):</label>
+            <input type="text" id="updateName" name="name">
+
+            <label for="updateMeta">New Metadata (JSON String, Optional, "" or "null" to clear):</label>
+            <textarea id="updateMeta" name="meta" rows="3" placeholder='{"department": "Sales"}'></textarea>
+
+            <label for="updateImage">New Image (Optional, to update features):</label>
+            <input type="file" id="updateImage" name="image" accept="image/*">
+
+            <button type="submit">Update Face</button>
+        </form>
+        <h3>Response:</h3>
+        <pre id="updateResponse"></pre>
+    </div>
+
+    <!-- Delete Face (Placeholder) -->
+    <div class="container">
+        <h2>Delete Face Entry (Placeholder)</h2>
+        <label for="deleteFaceId">Face ID to Delete (UUID):</label>
+        <input type="text" id="deleteFaceId" name="delete_face_id">
+        <button id="deleteFaceBtn">Delete Face (Not Implemented Yet)</button>
+        <h3>Response:</h3>
+        <pre id="deleteResponse"></pre>
+    </div>
+
+
+<script>
+    const API_BASE_URL = "/api/v1/faces";
+
+    // Helper to display responses
+    function displayResponse(elementId, data) {
+        document.getElementById(elementId).textContent = JSON.stringify(data, null, 2);
+    }
+
+    // Create Face
+    document.getElementById('createFaceForm').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const formData = new FormData(this);
+        const responseElement = document.getElementById('createResponse');
+        responseElement.textContent = 'Processing...';
+
+        try {
+            const response = await fetch(API_BASE_URL, {
+                method: 'POST',
+                body: formData // FastAPI handles FormData for File and Form fields
+            });
+            const result = await response.json();
+            displayResponse('createResponse', result);
+            if (response.ok) {
+                alert('Face created successfully! ID: ' + result.id);
+                document.getElementById('listFacesBtn').click(); // Refresh list
+            } else {
+                alert('Error creating face: ' + (result.detail || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Create Face Error:', error);
+            responseElement.textContent = 'Error: ' + error.message;
+            alert('Network or script error creating face.');
+        }
+    });
+
+    // List Faces
+    document.getElementById('listFacesBtn').addEventListener('click', async function() {
+        const facesListDiv = document.getElementById('facesList');
+        const responseElement = document.getElementById('listResponse');
+        const modelFilter = document.getElementById('listModelFilter').value.trim();
+        facesListDiv.innerHTML = 'Loading...';
+        responseElement.textContent = 'Processing...';
+
+        let url = API_BASE_URL + `?limit=50`; // Add a limit
+        if (modelFilter) {
+            url += `&model_name=${encodeURIComponent(modelFilter)}`;
+        }
+
+        try {
+            const response = await fetch(url);
+            const result = await response.json();
+            displayResponse('listResponse', result);
+            facesListDiv.innerHTML = ''; // Clear previous
+            if (response.ok) {
+                if (result.length === 0) {
+                    facesListDiv.innerHTML = '<p>No faces found.</p>';
+                    return;
+                }
+                result.forEach(face => {
+                    const item = document.createElement('div');
+                    item.className = 'face-item';
+                    let embeddingsText = 'No embeddings info';
+                    if (face.embeddings_info && face.embeddings_info.length > 0) {
+                        embeddingsText = face.embeddings_info.map(emb => `${emb.model_name} (at ${new Date(emb.created_at).toLocaleString()})`).join(', ');
+                    }
+                    item.innerHTML = `
+                        <strong>ID:</strong> ${face.id}<br>
+                        <strong>Name:</strong> ${face.name || 'N/A'}<br>
+                        <strong>Model(s):</strong> ${embeddingsText}<br> 
+                        <strong>Meta:</strong> ${face.metadata ? JSON.stringify(face.metadata) : 'N/A'}<br>
+                        <strong>Created:</strong> ${new Date(face.created_at).toLocaleString()}<br>
+                        <strong>Updated:</strong> ${new Date(face.updated_at).toLocaleString()}<br>
+                        <div class="actions">
+                            <button onclick="populateGetForm('${face.person_id}')">View Details</button>
+                            <button onclick="populateUpdateForm('${face.person_id}', '${face.name || ''}', '${face.metadata ? JSON.stringify(face.metadata).replace(/"/g, '"') : ''}')">Edit</button>
+                            <button onclick="populateDeleteForm('${face.person_id}')">Delete (UI Only)</button>
+                        </div>
+                    `;
+                    facesListDiv.appendChild(item);
+                });
+            } else {
+                facesListDiv.innerHTML = `<p style="color:red;">Error loading faces: ${result.detail || 'Unknown error'}</p>`;
+            }
+        } catch (error) {
+            console.error('List Faces Error:', error);
+            responseElement.textContent = 'Error: ' + error.message;
+            facesListDiv.innerHTML = '<p style="color:red;">Network or script error listing faces.</p>';
+        }
+    });
+
+    // Get Single Face
+    document.getElementById('getFaceBtn').addEventListener('click', async function() {
+        const faceId = document.getElementById('getFaceId').value.trim();
+        const responseElement = document.getElementById('getResponse');
+        if (!faceId) {
+            alert('Please enter a Face ID.');
+            return;
+        }
+        responseElement.textContent = 'Processing...';
+        try {
+            const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`);
+            const result = await response.json();
+            displayResponse('getResponse', result);
+        } catch (error) {
+            console.error('Get Face Error:', error);
+            responseElement.textContent = 'Error: ' + error.message;
+        }
+    });
+    
+    function populateGetForm(faceId) {
+        document.getElementById('getFaceId').value = faceId;
+        document.getElementById('getFaceBtn').click();
+        window.scrollTo(0, document.getElementById('getFaceBtn').offsetTop - 100);
+    }
+
+    // Update Face
+    document.getElementById('updateFaceForm').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const faceId = document.getElementById('updateFaceId').value.trim();
+        if (!faceId) {
+            alert('Please enter the Face ID to update.');
+            return;
+        }
+        const responseElement = document.getElementById('updateResponse');
+        responseElement.textContent = 'Processing...';
+        
+        const formData = new FormData();
+        const nameInput = document.getElementById('updateName').value;
+        const metaInput = document.getElementById('updateMeta').value; // Allow empty string
+        const imageFile = document.getElementById('updateImage').files[0];
+
+        if (nameInput) formData.append('name', nameInput);
+        // Only append meta if it's not empty, or if it's an empty string (to clear)
+        // The server handles "" or "null" for clearing. If field is omitted, no change.
+        if (metaInput !== "" && metaInput !== null) formData.append('meta', metaInput); 
+        else if (metaInput === "") formData.append('meta', ""); // Send empty string to clear
+
+        if (imageFile) formData.append('image', imageFile);
+
+        if (!nameInput && metaInput === "" && !imageFile && metaInput !== null) {
+             alert("Please provide name, metadata, or an image to update.");
+             responseElement.textContent = 'No update data provided.';
+             return;
+        }
+
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, {
+                method: 'PUT',
+                body: formData
+            });
+            const result = await response.json();
+            displayResponse('updateResponse', result);
+            if (response.ok) {
+                alert('Face updated successfully!');
+                document.getElementById('listFacesBtn').click(); // Refresh list
+            } else {
+                alert('Error updating face: ' + (result.detail || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Update Face Error:', error);
+            responseElement.textContent = 'Error: ' + error.message;
+            alert('Network or script error updating face.');
+        }
+    });
+
+    function populateUpdateForm(faceId, name, metaJsonString) {
+        document.getElementById('updateFaceId').value = faceId;
+        document.getElementById('updateName').value = name === 'N/A' ? '' : name;
+        document.getElementById('updateMeta').value = metaJsonString === 'N/A' ? '' : metaJsonString.replace(/"/g, '"');
+        document.getElementById('updateImage').value = ''; // Clear file input
+        window.scrollTo(0, document.getElementById('updateFaceForm').offsetTop - 100);
+    }
+    
+    // Delete Face (UI Placeholder)
+    document.getElementById('deleteFaceBtn').addEventListener('click', function() {
+        const faceId = document.getElementById('deleteFaceId').value.trim();
+        const responseElement = document.getElementById('deleteResponse');
+        if (!faceId) {
+            alert('Please enter a Face ID to delete.');
+            return;
+        }
+        responseElement.textContent = `Simulating delete for ID: ${faceId}. Implement server-side DELETE endpoint.`;
+        alert('Delete functionality is not yet implemented on the server.');
+        // When implemented:
+        // try {
+        //     const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, { method: 'DELETE' });
+        //     if (response.ok) { // Or 204 No Content
+        //         displayResponse('deleteResponse', { message: `Face ID ${faceId} deleted (or request sent).` });
+        //         document.getElementById('listFacesBtn').click(); // Refresh list
+        //     } else {
+        //         const result = await response.json();
+        //         displayResponse('deleteResponse', result);
+        //     }
+        // } catch (error) {
+        //     console.error('Delete Face Error:', error);
+        //     displayResponse('deleteResponse', { error: error.message });
+        // }
+    });
+
+    function populateDeleteForm(faceId) {
+        document.getElementById('deleteFaceId').value = faceId;
+        window.scrollTo(0, document.getElementById('deleteFaceBtn').offsetTop - 100);
+    }
+
+
+    // Initial load of faces
+    window.onload = () => {
+        document.getElementById('listFacesBtn').click();
+    };
+
+</script>
+
+</body>
+</html>

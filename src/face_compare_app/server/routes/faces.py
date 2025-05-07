@@ -4,180 +4,197 @@ import time
 import json
 import tempfile
 import shutil
+import uuid # For generating ID
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, Query, Body
 
-# Assuming models are in server.models
-from ..models import FaceInsertResponse
-# Import necessary functions and exceptions
+# Updated models
+from ..models import FaceInsertResponse, FaceUpdateResponse, PersonResponse, FaceInsertData, FaceUpdateData
 from ... import core as core_func
 from ... import database as db_func
 from ...exceptions import (
-    FaceCompareError, ImageLoadError, NoFaceFoundError,
-    MultipleFacesFoundError, ModelError, EmbeddingError, DatabaseError,
-    InvalidInputError # Added for metadata parsing errors in utils
+    ImageLoadError, NoFaceFoundError, MultipleFacesFoundError,
+    ModelError, EmbeddingError, DatabaseError, InvalidInputError
 )
-# Import the FaceProcessor class for type hinting dependency
-from ...core import FaceProcessor
-from ..dependencies import get_database_path, get_initialized_processor_http # Import the database path dependency
-# Import the utility for metadata parsing (though we do it inline here too)
-from ... import utils
-
-# Import the dependency function to ensure processor is ready
+from ...core import FaceProcessor # ACTIVE_MODELS_FOR_EMBEDDING not needed if one model per insert
+from ..dependencies import get_initialized_processor_http, get_database_path
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v1", tags=["Faces"])
+router = APIRouter(prefix="/api/v1/faces", tags=["Faces Management"]) # Renamed tag
 
-
-@router.post("/faces", response_model=FaceInsertResponse)
-async def api_insert_face(
-    image: UploadFile = File(..., description="Image file containing the face to insert."),
-    id: str = Form(..., description="Unique ID for this face/person."),
-    name: Optional[str] = Form(None, description="Optional name associated with the face."),
-    meta: Optional[str] = Form(None, description="Optional metadata as a JSON string (e.g., '{\"dept\": \"IT\"}')."),
-    # Ensure processor is ready before proceeding
-    # _processor_check: FaceProcessor = Depends(get_initialized_processor),
-    # Get the database path (using the simple function above for now)
+# --- POST /api/v1/faces (New face record) ---
+@router.post("", response_model=FaceInsertResponse, status_code=201)
+async def api_create_face_entry(
+    image: UploadFile = File(..., description="Image file containing the face."),
+    name: Optional[str] = Form(None, description="Name associated with the person/face."),
+    meta: Optional[str] = Form(None, description="Optional metadata as a JSON string."),
+    processor: FaceProcessor = Depends(get_initialized_processor_http),
     db_path: Path = Depends(get_database_path)
 ):
-    """
-    Extracts features from an uploaded image and stores face information.
-    Expects exactly one face in the image.
-    """
-    start_time = time.time()
-    logger.info(f"Received insert face request. ID: {id}, Name: {name}, Image: {image.filename}, Meta: {meta}, DB: {db_path}")
+    face_id_str = str(uuid.uuid4())
+    model_name_used = processor.model_name # Get model name from the loaded processor
+    logger.info(f"Request to create face. Generated ID: {face_id_str}, Name: {name}, Model: {model_name_used}")
 
-    # 1. Parse metadata JSON string (optional)
     metadata_dict = None
     if meta:
         try:
             metadata_dict = json.loads(meta)
-            if not isinstance(metadata_dict, dict):
-                raise ValueError("Metadata must be a valid JSON object (dictionary).")
-            logger.debug(f"Parsed metadata for ID {id}: {metadata_dict}")
+            if not isinstance(metadata_dict, dict): raise ValueError("JSON Object required")
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Invalid JSON metadata provided for ID {id}: {meta} - Error: {e}")
-            # Use 422 for validation errors
             raise HTTPException(status_code=422, detail=f"Invalid JSON metadata: {e}")
 
-    # 2. Save image temporarily and extract features
     temp_file_path: Optional[str] = None
-    features_bytes: Optional[bytes] = None
-    error_detail: Optional[str] = None
-    status_code: int = 200
-
     try:
-        # Create a temporary file
         suffix = Path(image.filename or ".tmp").suffix
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file_path = temp_file.name
-            logger.debug(f"Saving uploaded image for ID '{id}' to temporary path: {temp_file_path}")
+            try: await image.seek(0); shutil.copyfileobj(image.file, temp_file)
+            finally: image.file.close()
 
-            # Copy content
-            try:
-                await image.seek(0)
-                shutil.copyfileobj(image.file, temp_file)
-            finally:
-                image.file.close()
-
-            # --- Extract Features using Core function ---
-            # This function handles loading, single face check, and embedding
-            logger.info(f"Extracting features from temporary file: {temp_file_path}")
-            features_bytes = core_func.extract_features(temp_file_path) # Expects str path
-            logger.info(f"Successfully extracted features ({len(features_bytes)} bytes) for ID '{id}'")
-
-        # If feature extraction successful, proceed to database insertion
-        if features_bytes:
-            logger.info(f"Adding face ID '{id}' to database: {db_path}")
-            # --- Add to Database ---
-            # This function handles DB connection, init, and insert/replace
-            db_func.add_face_to_db(
-                db_path=db_path, # Pass Path object
-                user_id=id,
-                name=name or f"Unnamed_{id}", # Provide a default name if None
-                features=features_bytes,
-                metadata=metadata_dict # Pass parsed dict
-            )
-            logger.info(f"Successfully added/updated face ID '{id}' in database.")
-
-    # --- Handle Specific Application Errors ---
-    except FileNotFoundError as e: # Should only happen if temp file fails creation/access badly
-        logger.error(f"Internal Error: Failed to access temporary file: {e}", exc_info=True)
-        status_code = 500
-        error_detail = "Internal server error: Could not process temporary image file."
-    except ImageLoadError as e:
-        logger.warning(f"Image loading failed for ID '{id}': {e.message} (Code: {e.code})")
-        status_code = 422 # Image format/content issue
-        error_detail = f"Failed to load image for ID '{id}'. Ensure it's a valid image file. ({e.code})"
-    except NoFaceFoundError as e:
-        logger.info(f"Insertion failed for ID '{id}': No face found. Details: {e.message} (Code: {e.code})")
-        status_code = 400 # Input image lacks required feature
-        error_detail = f"No face detected in the provided image for ID '{id}'. ({e.code})"
-    except MultipleFacesFoundError as e:
-        logger.info(f"Insertion failed for ID '{id}': Multiple faces found. Details: {e.message} (Code: {e.code})")
-        status_code = 400 # Input image doesn't meet criteria
-        error_detail = f"Multiple faces detected in the image for ID '{id}'; expected exactly one. ({e.code})"
-    except ModelError as e:
-        logger.error(f"Model error during feature extraction for ID '{id}': {e.message} (Code: {e.code})", exc_info=True)
-        status_code = 503 # Service Unavailable - underlying model issue
-        error_detail = f"Face processing model error occurred. Please try again later. ({e.code})"
-    except EmbeddingError as e:
-        logger.error(f"Embedding error during feature extraction for ID '{id}': {e.message} (Code: {e.code})", exc_info=True)
-        status_code = 500 # Internal Server Error - failure during processing step
-        error_detail = f"Failed to generate face features for ID '{id}'. ({e.code})"
-    except DatabaseError as e:
-        logger.error(f"Database error during insertion for ID '{id}': {e.message} (Code: {e.code})", exc_info=True)
-        status_code = 500 # Treat DB errors as internal server errors
-        error_detail = f"Database operation failed for ID '{id}'. ({e.code})"
-    except InvalidInputError as e: # Catch metadata validation errors if utils.parse_metadata was used
-        logger.error(f"Invalid input error (likely metadata) for ID '{id}': {e.message}", exc_info=False)
-        status_code = 422
-        error_detail = f"Invalid input: {e.message} ({e.code})"
-    except FaceCompareError as e: # Catch other specific app errors
-        logger.error(f"Face processing error for ID '{id}': {e.message} (Code: {e.code})", exc_info=True)
-        status_code = 500
-        error_detail = f"An error occurred during face processing for ID '{id}'. ({e.code})"
-    except TypeError as e: # Catch if processor wasn't available
-        logger.error(f"Type error (likely processor unavailable) for ID '{id}': {e}", exc_info=True)
-        status_code = 503
-        error_detail = "Face processing service is unavailable or not initialized."
-    except HTTPException:
-        # Re-raise HTTPExceptions raised by dependencies
-        raise
-    except Exception as e:
-        # Catch any other unexpected errors
-        logger.error(f"Unexpected error during face insertion for ID '{id}': {e}", exc_info=True)
-        status_code = 500
-        error_detail = "An unexpected internal server error occurred."
-    finally:
-        # --- Clean up temporary file ---
-        if temp_file_path and Path(temp_file_path).exists():
-            try:
-                Path(temp_file_path).unlink()
-                logger.debug(f"Deleted temporary file: {temp_file_path}")
-            except OSError as unlink_err:
-                logger.error(f"Error deleting temporary file {temp_file_path}: {unlink_err}")
-
-    # --- Prepare and return response ---
-    if status_code != 200 or features_bytes is None:
-        # If an error occurred or features couldn't be extracted
-        raise HTTPException(status_code=status_code, detail=error_detail or "An unknown error occurred during processing.")
-    else:
-        # Success case
-        elapsed_ms = int((time.time() - start_time) * 1000)
-
-        # Calculate feature size (assuming float32 embeddings)
-        # TODO: Get this more robustly from the model/processor if possible
-        feature_size = len(features_bytes) // 4 if len(features_bytes) % 4 == 0 else None
-        if feature_size is None:
-            logger.warning(f"Could not determine feature size from byte length ({len(features_bytes)}) for ID '{id}'.")
-
-
-        logger.info(f"Insert face request successful for ID: {id}. Elapsed: {elapsed_ms}ms")
-        return FaceInsertResponse(
-            face_id=id,
-            feature_size=feature_size, # Can be None if calculation failed
-            message=f"Successfully inserted/updated face data for ID '{id}'."
+        features_bytes = core_func.extract_features(temp_file_path) # Uses the configured processor
+        
+        db_func.add_face_to_db(
+            db_path,
+            face_id=face_id_str,
+            name=name or f"Face_{face_id_str[:8]}", # Default name
+            features=features_bytes,
+            model_name=model_name_used, # Store the model name
+            metadata=metadata_dict
         )
+        return FaceInsertResponse(
+            id=uuid.UUID(face_id_str),
+            name=name or f"Face_{face_id_str[:8]}",
+            model_name=model_name_used,
+            message="Face entry created successfully."
+        )
+    except (ImageLoadError, NoFaceFoundError, MultipleFacesFoundError, EmbeddingError, ModelError) as e:
+        logger.error(f"Feature extraction failed for new face {face_id_str}: {e}")
+        raise HTTPException(status_code=400, detail=f"Feature extraction failed: {e.message}")
+    except DatabaseError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e.message}")
+    except Exception as e:
+        logger.error(f"Unexpected error creating face '{face_id_str}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error.")
+    finally:
+        if temp_file_path and Path(temp_file_path).exists(): Path(temp_file_path).unlink()
+
+
+# --- PUT /api/v1/faces/{face_id} (Update name, meta, or image/features) ---
+@router.put("/{face_id}", response_model=FaceUpdateResponse)
+async def api_update_face_entry(
+    face_id: str, # Path parameter (UUID string)
+    name: Optional[str] = Form(None),
+    meta: Optional[str] = Form(None), # JSON string or "" to clear
+    image: Optional[UploadFile] = File(None),
+    processor: FaceProcessor = Depends(get_initialized_processor_http),
+    db_path: Path = Depends(get_database_path)
+):
+    logger.info(f"Request to update face ID '{face_id}'. Name: {name}, Image provided: {image is not None}")
+
+    existing_face_data = db_func.get_face_by_id(db_path, face_id)
+    if not existing_face_data:
+        raise HTTPException(status_code=404, detail=f"Face with ID '{face_id}' not found.")
+
+    # Update name/metadata
+    metadata_dict_to_update: Optional[Dict[str, Any]] = None
+    if meta is not None: # meta Form field was provided
+        if meta == "": metadata_dict_to_update = {} # Clear
+        else:
+            try:
+                metadata_dict_to_update = json.loads(meta)
+                if not isinstance(metadata_dict_to_update, dict): raise ValueError("JSON Object")
+            except (json.JSONDecodeError, ValueError) as e:
+                raise HTTPException(status_code=422, detail=f"Invalid JSON metadata: {e}")
+    
+    db_func.update_face_details(db_path, face_id, name=name, metadata=metadata_dict_to_update)
+
+    features_were_updated = False
+    if image:
+        logger.info(f"New image for face '{face_id}'. Re-extracting features with model '{processor.model_name}'...")
+        temp_file_path: Optional[str] = None
+        try:
+            suffix = Path(image.filename or ".tmp").suffix
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file_path = temp_file.name
+                try: await image.seek(0); shutil.copyfileobj(image.file, temp_file)
+                finally: image.file.close()
+            
+            new_features_bytes = core_func.extract_features(temp_file_path)
+            # This will REPLACE the existing record due to INSERT OR REPLACE in add_face_to_db
+            # We need the current name and metadata if they weren't part of this request's form data
+            current_name = name if name is not None else existing_face_data['name']
+            current_meta_dict = metadata_dict_to_update if meta is not None else existing_face_data['metadata']
+
+            db_func.add_face_to_db(
+                db_path,
+                face_id=face_id,
+                name=current_name, # Use new or existing name
+                features=new_features_bytes,
+                model_name=processor.model_name, # Features are from current processor
+                metadata=current_meta_dict # Use new or existing meta
+            )
+            features_were_updated = True
+            logger.info(f"Features for face ID '{face_id}' updated using model '{processor.model_name}'.")
+        except (ImageLoadError, NoFaceFoundError, MultipleFacesFoundError, EmbeddingError, ModelError) as e:
+            raise HTTPException(status_code=400, detail=f"Feature re-extraction failed: {e.message}")
+        except DatabaseError as e:
+            raise HTTPException(status_code=500, detail=f"Database error during feature update: {e.message}")
+        finally:
+            if temp_file_path and Path(temp_file_path).exists(): Path(temp_file_path).unlink()
+
+    # Fetch the final state of the record
+    updated_face_data = db_func.get_face_by_id(db_path, face_id)
+    if not updated_face_data:
+        raise HTTPException(status_code=500, detail="Failed to retrieve updated face data.")
+
+    return FaceUpdateResponse(
+        id=uuid.UUID(updated_face_data['id']),
+        name=updated_face_data['name'],
+        metadata=updated_face_data['metadata'],
+        model_name=updated_face_data['model_name'],
+        updated_at=updated_face_data['updated_at'],
+        message="Face entry updated successfully.",
+        features_updated=features_were_updated
+    )
+
+# --- GET /api/v1/faces (List all faces) ---
+@router.get("", response_model=List[PersonResponse])
+async def api_list_faces(
+    db_path: Path = Depends(get_database_path),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    model_name: Optional[str] = Query(None, description="Filter by model name (e.g., 'buffalo_s')") # Optional filter
+):
+    logger.info(f"Request to list faces. Skip: {skip}, Limit: {limit}, Model: {model_name}")
+    try:
+        # Modify get_all_faces to accept model_name filter if needed,
+        # or filter here if get_all_faces returns all.
+        # For now, assume get_all_faces doesn't filter by model, so we filter post-fetch.
+        # Better: db_func.get_all_faces(db_path, limit=limit, offset=skip, model_name_filter=model_name)
+        all_faces_data = db_func.get_all_faces(db_path, limit=limit, offset=skip) # Needs model_name filter in DB layer
+        
+        if model_name:
+            all_faces_data = [f for f in all_faces_data if f.get('model_name') == model_name]
+            
+        return [PersonResponse(**p) for p in all_faces_data]
+    except DatabaseError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e.message}")
+
+# --- GET /api/v1/faces/{face_id} (Get a single face) ---
+@router.get("/{face_id}", response_model=PersonResponse)
+async def api_get_face(
+    face_id: str,
+    db_path: Path = Depends(get_database_path)
+):
+    logger.info(f"Request to get face ID '{face_id}'.")
+    try:
+        face_data = db_func.get_face_by_id(db_path, face_id)
+        if not face_data:
+            raise HTTPException(status_code=404, detail=f"Face with ID '{face_id}' not found.")
+        return PersonResponse(**face_data)
+    except DatabaseError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e.message}")
+
+# TODO: Add DELETE /api/v1/faces/{face_id} endpoint

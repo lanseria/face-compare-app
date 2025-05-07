@@ -1,5 +1,5 @@
 # src/face_compare_app/server/models.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, UUID4
 from typing import List, Optional, Dict, Any, Tuple
 
 # --- Request Models (Mostly handled by Form/Query/File, but useful for clarity/complex bodies) ---
@@ -72,3 +72,42 @@ class MultiLiveSearchWSResponse(BaseModel):
     processing_time_ms: int = Field(..., description="Total time taken by the server to process this frame and generate the response")
     # Global error message if frame processing itself failed before face detection
     frame_error_message: Optional[str] = Field(None, description="Error message if the entire frame processing failed")
+
+
+class EmbeddingInfo(BaseModel):
+    model_name: str
+    created_at: str # Or datetime object
+
+class PersonResponse(BaseModel): # This will represent a row from the 'faces' table
+    person_id: UUID4 = Field(..., alias="id") # Alias 'id' from DB to 'person_id'
+    name: Optional[str]
+    metadata: Optional[Dict[str, Any]]
+    created_at: str
+    updated_at: str
+    # Since each row in 'faces' has one feature and one model_name:
+    embeddings_info: List[EmbeddingInfo] # Will contain a single item
+
+class FaceInsertData(BaseModel): # For request body if not using Form for all
+    name: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+    # image is UploadFile
+
+class FaceInsertResponse(BaseModel):
+    id: UUID4 # The generated ID of the face record
+    name: Optional[str]
+    model_name: str
+    message: str
+
+class FaceUpdateData(BaseModel): # For request body of PUT
+    name: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+    # image is UploadFile
+
+class FaceUpdateResponse(BaseModel):
+    id: UUID4
+    name: Optional[str]
+    metadata: Optional[Dict[str, Any]]
+    model_name: str # Include current model_name
+    updated_at: str
+    message: str
+    features_updated: bool = False # Flag if features were changed

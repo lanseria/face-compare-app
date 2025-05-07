@@ -121,6 +121,7 @@ async def read_root(request: Request):
             <ul>
                 <li><a href="/test/live-compare">Live Comparison Test Page</a></li>
                 <li><a href="/test/live-search">Live Search Test Page</a></li>
+                <li><a href="/test/crud">CRUD Test Page</a></li>
             </ul>
         </body>
     </html>
@@ -139,3 +140,7 @@ async def get_live_search_test_page(request: Request):
     logger.info("Serving live search test page.")
     return templates.TemplateResponse("live_search_test.html", {"request": request})
 
+@app.get("/test/crud", response_class=HTMLResponse, tags=["Root & Test Pages"])
+async def get_faces_crud_test_page(request: Request):
+    logger.info("Serving faces CRUD test page.")
+    return templates.TemplateResponse("faces_crud_test.html", {"request": request})
