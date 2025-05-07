@@ -65,7 +65,7 @@
 
         function connectWebSocket() {
             if (websocket && websocket.readyState === WebSocket.OPEN) return;
-            const wsUrl = `ws://${window.location.host}/api/v1/live-search/ws`;
+            const wsUrl = `ws://${window.location.host}/api/v1/live/search/ws`;
             websocket = new WebSocket(wsUrl);
             statusDiv.textContent = `Status: Connecting to ${wsUrl}...`;
             statusDiv.className = 'other';

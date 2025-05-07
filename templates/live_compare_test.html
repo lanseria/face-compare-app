@@ -127,7 +127,7 @@
         return;
       }
 
-      const wsUrl = `ws://${window.location.host}/api/v1/live/ws?reference_id=${encodeURIComponent(refId)}`;
+      const wsUrl = `ws://${window.location.host}/api/v1/live/compare/ws?reference_id=${encodeURIComponent(refId)}`;
       websocket = new WebSocket(wsUrl);
       statusDiv.textContent = `Status: Connecting to ${wsUrl}...`;
       statusDiv.className = 'other';

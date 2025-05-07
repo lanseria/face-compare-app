@@ -8,8 +8,14 @@ from fastapi.staticfiles import StaticFiles # If you add CSS/JS files later
 from fastapi.templating import Jinja2Templates # Import Jinja2Templates
 
 # Import routers from the routes module
-from .routes import compare, faces, search, live
-from .routes.live import live_search_db
+from .routes import compare as compare_router
+from .routes import faces as faces_router
+from .routes import search as search_router
+# Import the new live WebSocket routers
+from .routes import live_compare_ws as live_compare_ws_router
+from .routes import live_search_ws as live_search_ws_router
+
+from .routes.live_utils import live_search_db_instance # Import the shared instance
 from .. import core as core_func # Import core module
 from ..core import FaceProcessor # Import the class
 from .dependencies import get_database_path # Import the dependency function
@@ -56,15 +62,18 @@ async def lifespan(app: FastAPI):
         else:
             logger.critical("CRITICAL: FaceProcessor instance is still None after attempting initialization.")
         app.state.face_processor = initialized_processor_instance
-
-        # --- Pre-load search DB ---
-        logger.info("Pre-loading search database...")
-        # Get the database path using the dependency logic
-        # NOTE: Cannot use Depends() here, call the function directly if simple
-        # Or pass config/path via app state if more complex
-        db_path = get_database_path() # Make sure this function is accessible
-        live_search_db.load(db_path)
-        logger.info(f"Pre-loaded live search DB: {len(live_search_db.embeddings)} faces in {live_search_db.load_time:.3f}s.")
+        if initialized_processor_instance:
+            # --- Pre-load search DB ---
+            logger.info("Pre-loading search database...")
+            # Get the database path using the dependency logic
+            # NOTE: Cannot use Depends() here, call the function directly if simple
+            # Or pass config/path via app state if more complex
+            db_path_for_preload = get_database_path()
+            # --- Use the imported instance ---
+            live_search_db_instance.load(db_path_for_preload)
+            logger.info(f"Pre-loaded live search DB: {len(live_search_db_instance.embeddings)} faces in {live_search_db_instance.load_time:.3f}s.")
+        else:
+            logger.warning("Face processor not initialized, skipping search DB pre-load.")
     except ModelError as e:
         logger.critical(f"CRITICAL - Model Initialization Error during startup (lifespan): {e}", exc_info=True)
         app.state.face_processor = None
@@ -89,10 +98,11 @@ app = FastAPI(
 
 # --- Include Routers ---
 # The prefix="/api/v1" is applied within each router file now
-app.include_router(compare.router)
-app.include_router(faces.router)
-app.include_router(search.router)
-app.include_router(live.router) 
+app.include_router(compare_router.router)
+app.include_router(faces_router.router)
+app.include_router(search_router.router)
+app.include_router(live_compare_ws_router.router) # Has prefix "/api/v1/live"
+app.include_router(live_search_ws_router.router)  # Has prefix "/api/v1/live"
 # Includes both WebSocket endpoints
 
 # --- Root Endpoint & HTML Test Page Routes ---
