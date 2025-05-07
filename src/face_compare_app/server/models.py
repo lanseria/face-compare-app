@@ -48,18 +48,27 @@ class LiveCompareWSResponse(BaseModel):
     all_detection_boxes: Optional[List[List[int]]] = Field(None, description="List of bounding boxes if multiple_faces status")
     # --- END ADDED ---
 
+# Keep LiveSearchMatchDetail as it is:
 class LiveSearchMatchDetail(BaseModel):
-    """Details of a match found during live search."""
     face_id: str
     name: Optional[str]
     similarity: float
     meta: Optional[Dict[str, Any]]
 
-class LiveSearchWSResponse(BaseModel):
-    """WebSocket message model for live search."""
-    status: str = Field(..., description="Status like 'match_found', 'no_match_found', 'no_face_detected', 'error'")
-    match: Optional[LiveSearchMatchDetail] = Field(None, description="Details of the best match found")
-    detection_box: Optional[List[int]] = Field(None, description="Bounding box [x1, y1, x2, y2] of detected face (optional)")
-    processed_frame_timestamp_ms: Optional[int] = Field(None, description="Server timestamp when frame was processed (optional)")
-    processing_time_ms: Optional[int] = Field(None, description="Time taken by the server to process this frame and generate the response, in milliseconds.")
-    message: Optional[str] = Field(None, description="Optional message (e.g., for errors)")
+# --- Models for Multi-Face Live Search ---
+class LiveSearchSingleFaceResult(BaseModel):
+    """Result for a single detected face in a live search frame."""
+    status: str = Field(..., description="'match_found', 'no_match_found', 'error_embedding'")
+    match_detail: Optional[LiveSearchMatchDetail] = Field(None, description="Details if a match was found")
+    detection_box: List[int] = Field(..., description="Bounding box [x1, y1, x2, y2] of this detected face")
+    message: Optional[str] = Field(None, description="Error message specific to this face's processing")
+
+class MultiLiveSearchWSResponse(BaseModel):
+    """WebSocket message model for live search, supporting multiple faces per frame."""
+    # General frame status (optional, could be inferred from faces_results)
+    # frame_status: str = Field("processed", description="'processed', 'error_decoding', 'no_faces_in_frame'")
+    faces_results: List[LiveSearchSingleFaceResult] = Field(default_factory=list, description="Results for each detected face in the frame")
+    processed_frame_timestamp_ms: int = Field(..., description="Server timestamp when frame processing finished")
+    processing_time_ms: int = Field(..., description="Total time taken by the server to process this frame and generate the response")
+    # Global error message if frame processing itself failed before face detection
+    frame_error_message: Optional[str] = Field(None, description="Error message if the entire frame processing failed")

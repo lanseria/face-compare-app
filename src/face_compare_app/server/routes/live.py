@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any, Tuple # Added Tuple
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends # Added Depends
 
 # Assuming models are in server.models
-from ..models import LiveCompareWSResponse, LiveSearchWSResponse, LiveSearchMatchDetail
+from ..models import LiveSearchSingleFaceResult, MultiLiveSearchWSResponse, LiveSearchMatchDetail
 # Import core/db functions and exceptions
 from ... import core as core_func
 from ... import database as db_func
@@ -203,15 +203,13 @@ async def websocket_live_compare(
         except RuntimeError: pass
 
 
-# --- Live Search WebSocket ---
-# Structure to hold loaded DB data in memory
+# --- LiveSearchDBData class remains the same ---
 class LiveSearchDBData:
     def __init__(self):
-        self.embeddings: List[Tuple[str, str, np.ndarray, Optional[Dict[str, Any]]]] = [] # id, name, embedding_np, meta_dict
+        self.embeddings: List[Tuple[str, str, np.ndarray, Optional[Dict[str, Any]]]] = []
         self.is_loaded = False
         self.load_time = 0.0
-
-    def load(self, db_path: Path):
+    def load(self, db_path: Path): # Implementation as before
         start_time = time.time()
         logger.info(f"LiveSearch WS: Loading database from {db_path} into memory...")
         self.embeddings = []
@@ -219,7 +217,7 @@ class LiveSearchDBData:
             db_records_raw = db_func.get_all_faces_from_db(db_path)
             if not db_records_raw:
                 logger.warning(f"LiveSearch WS: Database '{db_path}' is empty.")
-                self.is_loaded = True # Mark as loaded even if empty
+                self.is_loaded = True
                 self.load_time = time.time() - start_time
                 return
 
@@ -227,223 +225,154 @@ class LiveSearchDBData:
                 try:
                     embedding_np = np.frombuffer(rec_features_bytes, dtype=np.float32)
                     if embedding_np.size != EXPECTED_EMBEDDING_DIM:
-                        logger.warning(f"LiveSearch WS: Skipping DB entry ID '{rec_id}': Feature size mismatch (got {embedding_np.size}).")
+                        logger.warning(f"LiveSearch WS: Skipping DB entry ID '{rec_id}': Feature size mismatch.")
                         continue
-
                     meta_dict: Optional[Dict[str, Any]] = None
                     if rec_meta_str:
-                        try:
-                            meta_dict = json.loads(rec_meta_str)
+                        try: meta_dict = json.loads(rec_meta_str)
                         except json.JSONDecodeError:
-                            logger.warning(f"LiveSearch WS: Failed to parse metadata JSON for DB ID '{rec_id}'.")
-                            meta_dict = {"_parse_error": "Invalid JSON in database"}
-
+                            logger.warning(f"LiveSearch WS: Invalid metadata JSON for DB ID '{rec_id}'.")
+                            meta_dict = {"_parse_error": "Invalid JSON"}
                     self.embeddings.append((rec_id, rec_name, embedding_np, meta_dict))
-
                 except Exception as e:
                     logger.error(f"LiveSearch WS: Error processing DB entry ID '{rec_id}': {e}", exc_info=False)
-
             self.is_loaded = True
             self.load_time = time.time() - start_time
-            logger.info(f"LiveSearch WS: Loaded {len(self.embeddings)} valid face records in {self.load_time:.3f}s.")
-
-        except (DatabaseError, Exception) as e:
+            logger.info(f"LiveSearch WS: Loaded {len(self.embeddings)} valid records in {self.load_time:.3f}s.")
+        except Exception as e: # Catch DatabaseError, etc.
             logger.error(f"LiveSearch WS: Failed to load database '{db_path}': {e}", exc_info=True)
-            self.is_loaded = False # Failed to load
-            raise # Re-raise to be caught by the websocket handler
+            self.is_loaded = False; raise
 
-
-# Create a shared instance (consider locking if updates are possible)
-live_search_db = LiveSearchDBData()
+live_search_db = LiveSearchDBData() # Global instance
 
 
 @router.websocket("/live-search/ws")
 async def websocket_live_search(
     websocket: WebSocket,
     processor: FaceProcessor = Depends(get_initialized_processor_ws),
-    db_path: Path = Depends(get_database_path) # Get DB path dependency
+    db_path: Path = Depends(get_database_path)
 ):
-    """
-    WebSocket endpoint for live face search against the database.
-    Client sends video frames (bytes), server sends search results if a match is found.
-    """
     await websocket.accept()
-    logger.info(f"WS connected: Live Search started using DB='{db_path}'.")
+    logger.info(f"WS connected: Multi-Face Live Search started using DB='{db_path}'.")
 
-    # Load/Reload DB data if not already loaded (or if using a more complex refresh mechanism)
-    # Simple approach: Load once per server start or first connection.
-    # For production, might need locking and a refresh strategy if DB changes.
     if not live_search_db.is_loaded:
         try:
-            # This blocks the first connection until loaded. Consider background loading.
             live_search_db.load(db_path)
         except Exception as e:
-            logger.error(f"LiveSearch WS: Critical - database load failed. Closing connection.", exc_info=True)
-            await websocket.close(code=1011, reason=f"Failed to load face database: {e}")
+            logger.error(f"LiveSearch WS: Critical DB load failed. Closing. Error: {e}", exc_info=True)
+            # Try to send an error before closing
+            error_response = MultiLiveSearchWSResponse(
+                faces_results=[],
+                processed_frame_timestamp_ms=int(time.time() * 1000),
+                processing_time_ms=0,
+                frame_error_message=f"Failed to load face database: {e}"
+            )
+            try: await websocket.send_json(error_response.model_dump())
+            except: pass # Ignore if send fails
+            await websocket.close(code=1011, reason="Database load failure.")
             return
-
-    if not live_search_db.embeddings:
-        logger.warning("LiveSearch WS: Proceeding with empty database.")
-        # Optionally send an initial status message to client?
 
     last_throttle_time = time.time()
     try:
         while True:
-            # Throttle frame processing
-            current_time = time.time()
-            if current_time - last_throttle_time < FRAME_PROCESSING_INTERVAL:
-                await asyncio.sleep(FRAME_PROCESSING_INTERVAL - (current_time - last_throttle_time))
+            current_loop_time = time.time()
+            if current_loop_time - last_throttle_time < FRAME_PROCESSING_INTERVAL:
+                await asyncio.sleep(FRAME_PROCESSING_INTERVAL - (current_loop_time - last_throttle_time))
             last_throttle_time = time.time()
 
-            frame_processing_start_time = time.perf_counter() # Use perf_counter for more precise interval timing
-
-            # Receive frame data
+            frame_processing_start_time = time.perf_counter()
             frame_bytes = await websocket.receive_bytes()
             logger.debug(f"LiveSearch WS: Received frame ({len(frame_bytes)} bytes).")
 
-            # Process frame
-            _frame, faces, error_msg = await process_frame_common(frame_bytes, processor)
+            _frame, detected_faces_insight, frame_proc_error_msg = await process_frame_common(frame_bytes, processor)
 
-            response_args = {
-                "status": "error",
-                "message": error_msg,
-                "match": None,
-                "detection_box": None,
-                "processed_frame_timestamp_ms": int(time.time() * 1000),
-                "processing_time_ms": None
-            }
+            all_faces_results: List[LiveSearchSingleFaceResult] = []
+            global_frame_error: Optional[str] = frame_proc_error_msg
 
-            # --- Determine status based on processing results ---
-            current_frame_status_determined = False
+            if not global_frame_error and detected_faces_insight:
+                if not live_search_db.embeddings:
+                    logger.warning("LiveSearch WS: Faces detected, but database is empty.")
+                    # Create a "no_match_found" result for each detected face due to empty DB
+                    for insight_face in detected_faces_insight:
+                        if insight_face.bbox is not None:
+                            all_faces_results.append(LiveSearchSingleFaceResult(
+                                status="no_match_found",
+                                detection_box=insight_face.bbox.astype(int).tolist(),
+                                message="Database is empty."
+                            ))
+                else:
+                    # Process each detected face
+                    for insight_face in detected_faces_insight:
+                        bbox_list = insight_face.bbox.astype(int).tolist() if insight_face.bbox is not None else [-1,-1,-1,-1] # Default box if None
+                        live_embedding = insight_face.normed_embedding
 
-            if error_msg:
-                response_args["status"] = "error"
-                response_args["message"] = error_msg
-                current_frame_status_determined = True
-            elif not faces:
-                response_args["status"] = "no_face_detected"
-                response_args["message"] = None
-                current_frame_status_determined = True
-            elif not live_search_db.embeddings:
-                response_args["status"] = "no_match_found" # Or a specific "db_empty" status
-                response_args["message"] = "Database is empty."
-                if faces: # Attach first face's box if available
-                    first_face_bbox = faces[0].bbox.astype(int).tolist() if faces[0].bbox is not None else None
-                    response_args["detection_box"] = first_face_bbox
-                current_frame_status_determined = True
-            else:
-                # Faces detected and DB has embeddings, so proceed to search
-                any_match_found_in_this_frame = False
-                for face_idx, face in enumerate(faces):
-                    live_embedding = face.normed_embedding
-                    bbox = face.bbox.astype(int).tolist() if face.bbox is not None else None
+                        if live_embedding is None:
+                            logger.warning("LiveSearch WS: Detected face has no embedding.")
+                            all_faces_results.append(LiveSearchSingleFaceResult(
+                                status="error_embedding",
+                                detection_box=bbox_list,
+                                message="Failed to get embedding for this face."
+                            ))
+                            continue # Next face
 
-                    # Set detection_box to the first face by default, can be overridden by a match
-                    if face_idx == 0: # Or some other logic if you want to pick 'primary' face
-                        response_args["detection_box"] = bbox
+                        best_match_sim = -1.0
+                        best_match_detail_info: Optional[LiveSearchMatchDetail] = None
 
-                    if live_embedding is None:
-                        logger.warning("LiveSearch WS: Detected face has no embedding.")
-                        # If one face has an error, we might prioritize this error for the frame response
-                        response_args["status"] = "error"
-                        response_args["message"] = "A detected face has no embedding."
-                        response_args["detection_box"] = bbox # Box of the problematic face
-                        any_match_found_in_this_frame = False # Ensure no match status if error
-                        break # Stop processing more faces for this frame
-
-                    best_match_sim = -1.0
-                    best_match_info = None
-
-                    for db_id, db_name, db_embedding_np, db_meta_dict in live_search_db.embeddings:
-                        similarity = FaceProcessor._cosine_similarity(live_embedding, db_embedding_np)
-                        if similarity > best_match_sim:
-                            best_match_sim = similarity
-                            best_match_info = (db_id, db_name, db_meta_dict)
-
-                    if best_match_sim >= LIVE_SEARCH_THRESHOLD and best_match_info:
-                        any_match_found_in_this_frame = True
-                        match_id, match_name, match_meta = best_match_info
-                        response_args["status"] = "match_found"
-                        response_args["match"] = LiveSearchMatchDetail(
-                            face_id=match_id, name=match_name,
-                            similarity=float(best_match_sim), meta=match_meta
-                        )
-                        response_args["detection_box"] = bbox # Box of the matched face
-                        response_args["message"] = None
-                        logger.debug(f"LiveSearch WS: Match found - ID={match_id}, Sim={best_match_sim:.4f}")
-                        break # Primary status for the frame is now "match_found"
-                    # No else here for individual non-matches, we handle it after the loop
-
-                if not any_match_found_in_this_frame and response_args["status"] != "error":
-                    # If loop finished, no errors, and no matches were found for any face
-                    response_args["status"] = "no_match_found"
-                    response_args["message"] = "No matches found for detected faces."
-                    response_args["match"] = None
-                    # response_args["detection_box"] would be the box of the last processed face, or the first one
-                
-                current_frame_status_determined = True
+                        for db_id, db_name, db_embedding_np, db_meta_dict in live_search_db.embeddings:
+                            similarity = FaceProcessor._cosine_similarity(live_embedding, db_embedding_np)
+                            if similarity > best_match_sim:
+                                best_match_sim = similarity
+                                if similarity >= LIVE_SEARCH_THRESHOLD: # Only store details if it's a potential match
+                                    best_match_detail_info = LiveSearchMatchDetail(
+                                        face_id=db_id,
+                                        name=db_name,
+                                        similarity=float(similarity), # Store the actual similarity
+                                        meta=db_meta_dict
+                                    )
+                        
+                        if best_match_detail_info: # A match above threshold was found
+                            all_faces_results.append(LiveSearchSingleFaceResult(
+                                status="match_found",
+                                match_detail=best_match_detail_info,
+                                detection_box=bbox_list
+                            ))
+                            logger.debug(f"LiveSearch WS: Match for a face - ID={best_match_detail_info.face_id}, Sim={best_match_detail_info.similarity:.4f}")
+                        else: # No match above threshold for this face
+                            all_faces_results.append(LiveSearchSingleFaceResult(
+                                status="no_match_found",
+                                detection_box=bbox_list,
+                                message=f"No match (best sim: {best_match_sim:.3f})" # Optionally send best sim
+                            ))
+            elif not global_frame_error and not detected_faces_insight:
+                # No faces detected in the frame, but no error during processing
+                logger.debug("LiveSearch WS: No faces detected in the frame.")
+                # `all_faces_results` will be empty, which is fine. Client can interpret.
+                pass
 
 
-            # === Calculate total processing time for this frame's response generation ===
-            response_args["processing_time_ms"] = int((time.perf_counter() - frame_processing_start_time) * 1000)
-
-            # Construct the final Pydantic model
-            final_response = LiveSearchWSResponse(**response_args)
-
-            # Determine if we should send this response
-            should_send = False
-            if final_response.status == "error": # Always send errors
-                should_send = True
-            elif final_response.status == "no_face_detected" and SEND_NO_FACE_UPDATES:
-                should_send = True
-            elif final_response.status == "match_found": # Always send matches
-                should_send = True
-            elif final_response.status == "no_match_found": # Handle "no_match_found"
-                # Send if SEND_NO_MATCH_UPDATES is true, OR
-                # if the DB was empty (message would indicate this), OR
-                # if faces were detected but simply none matched (the general case).
-                # The previous logic was too restrictive. We want to send "no_match_found"
-                # if faces were seen and processed but didn't match, unless explicitly suppressed.
-                if SEND_NO_MATCH_UPDATES:
-                    should_send = True
-                elif not live_search_db.embeddings and faces: # DB empty but saw faces
-                    should_send = True
-                elif live_search_db.embeddings and faces: # DB has entries, saw faces, but none matched
-                    # This is the case where we *should* send a "no_match_found" even if
-                    # SEND_NO_MATCH_UPDATES is false, to give feedback that processing happened.
-                    # Let's make this the default behavior unless a flag *explicitly* suppresses ALL non-match/non-error messages.
-                    # For now, let's simplify: if it's "no_match_found", and SEND_NO_MATCH_UPDATES is FALSE,
-                    # we still send it to avoid silent failures.
-                    # To truly suppress it, a new flag or more complex logic would be needed.
-                    # Let's simplify: always send "no_match_found" if that's the determined status.
-                    # The SEND_NO_MATCH_UPDATES could then be re-purposed for client-side filtering if desired.
-                    should_send = True # Always send if status is no_match_found
-
-            if should_send:
-                logger.debug(f"LiveSearch WS: Sending response: Status={final_response.status}, ProcTime={final_response.processing_time_ms}ms")
-                await websocket.send_json(final_response.model_dump())
-            else:
-                # This case should now be rarer, mainly for "no_face_detected" when SEND_NO_FACE_UPDATES is false.
-                logger.debug(f"LiveSearch WS: Update not sent for status '{final_response.status}'. Proc time: {final_response.processing_time_ms}ms")
-
-            await websocket.send_json(final_response.model_dump())
+            processing_time_ms = int((time.perf_counter() - frame_processing_start_time) * 1000)
+            response_to_send = MultiLiveSearchWSResponse(
+                faces_results=all_faces_results,
+                processed_frame_timestamp_ms=int(time.time() * 1000),
+                processing_time_ms=processing_time_ms,
+                frame_error_message=global_frame_error
+            )
+            
+            logger.debug(f"LiveSearch WS: Sending {len(all_faces_results)} face results. FrameErr: {global_frame_error}. ProcTime: {processing_time_ms}ms")
+            await websocket.send_json(response_to_send.model_dump())
 
     except WebSocketDisconnect:
-        logger.info("WS disconnected: Live Search ended.")
+        logger.info("WS disconnected: Multi-Face Live Search ended.")
     except Exception as e:
-        logger.error(f"Error in Live Search WebSocket: {e}", exc_info=True)
+        logger.error(f"Error in Multi-Face Live Search WebSocket: {e}", exc_info=True)
         try:
-            # Calculate processing time even on error if possible
-            proc_time_on_error = int((time.perf_counter() - frame_processing_start_time) * 1000) if 'frame_processing_start_time' in locals() else None
-            await websocket.send_json(
-                LiveSearchWSResponse(
-                    status="error",
-                    message=f"Internal server error: {str(e)}",
-                    processing_time_ms=proc_time_on_error
-                ).model_dump()
-            )
+            proc_time = int((time.perf_counter() - frame_processing_start_time) * 1000) if 'frame_processing_start_time' in locals() else 0
+            await websocket.send_json(MultiLiveSearchWSResponse(
+                faces_results=[],
+                processed_frame_timestamp_ms=int(time.time()*1000),
+                processing_time_ms=proc_time,
+                frame_error_message=f"Internal server error: {str(e)}"
+            ).model_dump())
             await websocket.close(code=1011)
-        except RuntimeError: # Handle cases where connection is already gone
-            pass
-        except Exception as e2: # Handle errors during error reporting itself
-            logger.error(f"Error trying to send error report over WebSocket: {e2}")
+        except RuntimeError: pass
+        except Exception as e2: logger.error(f"Error sending error report: {e2}")
