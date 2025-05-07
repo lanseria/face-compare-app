@@ -78,7 +78,7 @@ A comprehensive Python application for face comparison, recognition, and managem
 
 ## Usage
 
-The application is named `face-compare-app` when installed. You can invoke its CLI commands or start the server.
+The application is named `cli` when installed. You can invoke its CLI commands or start the server.
 
 ### CLI Commands
 
@@ -97,7 +97,7 @@ The application is named `face-compare-app` when installed. You can invoke its C
     ```
 *   **Search for a face in the database (CLI manages DB path):**
     ```bash
-    face-compare_app search --db data/cli_face_db.sqlite --img path/to/query_face.jpg [--threshold 0.6]
+    cli search --db data/cli_face_db.sqlite --img path/to/query_face.jpg [--threshold 0.6]
     ```
 *   **Live comparison using camera:**
     ```bash
@@ -118,7 +118,7 @@ The application is named `face-compare-app` when installed. You can invoke its C
         ```
     *   With GPU (CUDAExecutionProvider) and `buffalo_s` model:
         ```bash
-        face_compare_app server --port 8080 --model-name buffalo_s --provider CUDAExecutionProvider --det-size-w 320 --det-size-h 320
+        cli server --port 8080 --model-name buffalo_s --provider CUDAExecutionProvider --det-size-w 320 --det-size-h 320
         ```
     See `cli server --help` for all options.
 
