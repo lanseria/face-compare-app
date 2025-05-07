@@ -61,4 +61,5 @@ class LiveSearchWSResponse(BaseModel):
     match: Optional[LiveSearchMatchDetail] = Field(None, description="Details of the best match found")
     detection_box: Optional[List[int]] = Field(None, description="Bounding box [x1, y1, x2, y2] of detected face (optional)")
     processed_frame_timestamp_ms: Optional[int] = Field(None, description="Server timestamp when frame was processed (optional)")
+    processing_time_ms: Optional[int] = Field(None, description="Time taken by the server to process this frame and generate the response, in milliseconds.")
     message: Optional[str] = Field(None, description="Optional message (e.g., for errors)")

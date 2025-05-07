@@ -32,8 +32,8 @@ router = APIRouter(prefix="/api/v1", tags=["Live"])
 LIVE_COMPARE_THRESHOLD = 0.55
 LIVE_SEARCH_THRESHOLD = 0.55
 EXPECTED_EMBEDDING_DIM = 512 # TODO: Get from model if possible
-SEND_NO_FACE_UPDATES = False # Control if "no_face" messages are sent
-SEND_NO_MATCH_UPDATES = False # Control if "no_match" messages are sent (for live search)
+SEND_NO_FACE_UPDATES = True # Control if "no_face" messages are sent
+SEND_NO_MATCH_UPDATES = True # Control if "no_match" messages are sent (for live search)
 FRAME_PROCESSING_INTERVAL = 0 # Minimum seconds between processing frames (controls rate)
 
 
@@ -286,14 +286,16 @@ async def websocket_live_search(
         logger.warning("LiveSearch WS: Proceeding with empty database.")
         # Optionally send an initial status message to client?
 
-    last_process_time = time.time()
+    last_throttle_time = time.time()
     try:
         while True:
             # Throttle frame processing
             current_time = time.time()
-            if current_time - last_process_time < FRAME_PROCESSING_INTERVAL:
-                await asyncio.sleep(FRAME_PROCESSING_INTERVAL - (current_time - last_process_time))
-            last_process_time = time.time()
+            if current_time - last_throttle_time < FRAME_PROCESSING_INTERVAL:
+                await asyncio.sleep(FRAME_PROCESSING_INTERVAL - (current_time - last_throttle_time))
+            last_throttle_time = time.time()
+
+            frame_processing_start_time = time.perf_counter() # Use perf_counter for more precise interval timing
 
             # Receive frame data
             frame_bytes = await websocket.receive_bytes()
@@ -302,89 +304,146 @@ async def websocket_live_search(
             # Process frame
             _frame, faces, error_msg = await process_frame_common(frame_bytes, processor)
 
+            response_args = {
+                "status": "error",
+                "message": error_msg,
+                "match": None,
+                "detection_box": None,
+                "processed_frame_timestamp_ms": int(time.time() * 1000),
+                "processing_time_ms": None
+            }
+
+            # --- Determine status based on processing results ---
+            current_frame_status_determined = False
+
             if error_msg:
-                # Send error message
-                await websocket.send_json(LiveSearchWSResponse(status="error", message=error_msg).model_dump())
-                continue
+                response_args["status"] = "error"
+                response_args["message"] = error_msg
+                current_frame_status_determined = True
             elif not faces:
-                # No face detected
-                if SEND_NO_FACE_UPDATES:
-                    await websocket.send_json(LiveSearchWSResponse(status="no_face_detected").model_dump())
-                continue
+                response_args["status"] = "no_face_detected"
+                response_args["message"] = None
+                current_frame_status_determined = True
             elif not live_search_db.embeddings:
-                # Faces detected, but DB is empty
-                if SEND_NO_MATCH_UPDATES: # Reuse this flag? Or a specific DB empty flag?
-                    # Send 'no_match' for each detected face if desired
-                    for face in faces:
-                        bbox = face.bbox.astype(int).tolist() if face.bbox is not None else None
-                        await websocket.send_json(LiveSearchWSResponse(status="no_match_found", detection_box=bbox).model_dump())
-                continue
+                response_args["status"] = "no_match_found" # Or a specific "db_empty" status
+                response_args["message"] = "Database is empty."
+                if faces: # Attach first face's box if available
+                    first_face_bbox = faces[0].bbox.astype(int).tolist() if faces[0].bbox is not None else None
+                    response_args["detection_box"] = first_face_bbox
+                current_frame_status_determined = True
+            else:
+                # Faces detected and DB has embeddings, so proceed to search
+                any_match_found_in_this_frame = False
+                for face_idx, face in enumerate(faces):
+                    live_embedding = face.normed_embedding
+                    bbox = face.bbox.astype(int).tolist() if face.bbox is not None else None
 
+                    # Set detection_box to the first face by default, can be overridden by a match
+                    if face_idx == 0: # Or some other logic if you want to pick 'primary' face
+                        response_args["detection_box"] = bbox
 
-            any_match_found_in_this_frame = False # New flag for the whole frame
-            processed_faces_count = 0
+                    if live_embedding is None:
+                        logger.warning("LiveSearch WS: Detected face has no embedding.")
+                        # If one face has an error, we might prioritize this error for the frame response
+                        response_args["status"] = "error"
+                        response_args["message"] = "A detected face has no embedding."
+                        response_args["detection_box"] = bbox # Box of the problematic face
+                        any_match_found_in_this_frame = False # Ensure no match status if error
+                        break # Stop processing more faces for this frame
 
-            for face in faces:
-                processed_faces_count += 1
-                live_embedding = face.normed_embedding
-                bbox = face.bbox.astype(int).tolist() if face.bbox is not None else None
+                    best_match_sim = -1.0
+                    best_match_info = None
 
-                if live_embedding is None:
-                    logger.warning("LiveSearch WS: Detected face has no embedding.")
-                    # Optionally send an error status for this specific face here if desired
-                    # e.g., await websocket.send_json(LiveSearchWSResponse(status="error", message="Face has no embedding", detection_box=bbox).model_dump())
-                    continue
+                    for db_id, db_name, db_embedding_np, db_meta_dict in live_search_db.embeddings:
+                        similarity = FaceProcessor._cosine_similarity(live_embedding, db_embedding_np)
+                        if similarity > best_match_sim:
+                            best_match_sim = similarity
+                            best_match_info = (db_id, db_name, db_meta_dict)
 
-                best_match_sim = -1.0
-                best_match_info: Optional[Tuple[str, str, Optional[Dict[str, Any]]]] = None
-
-                for db_id, db_name, db_embedding_np, db_meta_dict in live_search_db.embeddings:
-                    similarity = FaceProcessor._cosine_similarity(live_embedding, db_embedding_np)
-                    if similarity > best_match_sim:
-                        best_match_sim = similarity
-                        best_match_info = (db_id, db_name, db_meta_dict)
-
-                if best_match_sim >= LIVE_SEARCH_THRESHOLD and best_match_info:
-                    any_match_found_in_this_frame = True # Set flag
-                    match_id, match_name, match_meta = best_match_info
-                    match_detail = LiveSearchMatchDetail(
-                        face_id=match_id,
-                        name=match_name,
-                        similarity=float(best_match_sim),
-                        meta=match_meta
-                    )
-                    logger.debug(f"LiveSearch WS: Match found - ID={match_id}, Sim={best_match_sim:.4f}")
-                    await websocket.send_json(
-                        LiveSearchWSResponse(
-                            status="match_found",
-                            match=match_detail,
-                            detection_box=bbox,
-                            processed_frame_timestamp_ms=int(time.time() * 1000)
-                        ).model_dump()
-                    )
-                else:
-                    # Face detected, but no match above threshold for THIS face
-                    if SEND_NO_MATCH_UPDATES:
-                        await websocket.send_json(
-                            LiveSearchWSResponse(status="no_match_found", detection_box=bbox).model_dump()
+                    if best_match_sim >= LIVE_SEARCH_THRESHOLD and best_match_info:
+                        any_match_found_in_this_frame = True
+                        match_id, match_name, match_meta = best_match_info
+                        response_args["status"] = "match_found"
+                        response_args["match"] = LiveSearchMatchDetail(
+                            face_id=match_id, name=match_name,
+                            similarity=float(best_match_sim), meta=match_meta
                         )
-            # ---- AFTER processing ALL faces in the current video frame ----
-            if processed_faces_count > 0 and not any_match_found_in_this_frame and not SEND_NO_MATCH_UPDATES:
-                # This condition means:
-                # 1. At least one face was processed.
-                # 2. None of them resulted in a "match_found" response being sent.
-                # 3. We are not configured to send individual "no_match_found" for each non-matching face.
-                # So, send a general "no_match_found" for the frame, perhaps without a specific box,
-                # or with the box of the first detected face if that makes sense for your UI.
-                logger.debug("LiveSearch WS: Faces detected in frame, but no matches found above threshold.")
-                await websocket.send_json(
-                    LiveSearchWSResponse(status="no_match_found", message="No matches found for detected faces in this frame.").model_dump()
-                )
+                        response_args["detection_box"] = bbox # Box of the matched face
+                        response_args["message"] = None
+                        logger.debug(f"LiveSearch WS: Match found - ID={match_id}, Sim={best_match_sim:.4f}")
+                        break # Primary status for the frame is now "match_found"
+                    # No else here for individual non-matches, we handle it after the loop
+
+                if not any_match_found_in_this_frame and response_args["status"] != "error":
+                    # If loop finished, no errors, and no matches were found for any face
+                    response_args["status"] = "no_match_found"
+                    response_args["message"] = "No matches found for detected faces."
+                    response_args["match"] = None
+                    # response_args["detection_box"] would be the box of the last processed face, or the first one
+                
+                current_frame_status_determined = True
+
+
+            # === Calculate total processing time for this frame's response generation ===
+            response_args["processing_time_ms"] = int((time.perf_counter() - frame_processing_start_time) * 1000)
+
+            # Construct the final Pydantic model
+            final_response = LiveSearchWSResponse(**response_args)
+
+            # Determine if we should send this response
+            should_send = False
+            if final_response.status == "error": # Always send errors
+                should_send = True
+            elif final_response.status == "no_face_detected" and SEND_NO_FACE_UPDATES:
+                should_send = True
+            elif final_response.status == "match_found": # Always send matches
+                should_send = True
+            elif final_response.status == "no_match_found": # Handle "no_match_found"
+                # Send if SEND_NO_MATCH_UPDATES is true, OR
+                # if the DB was empty (message would indicate this), OR
+                # if faces were detected but simply none matched (the general case).
+                # The previous logic was too restrictive. We want to send "no_match_found"
+                # if faces were seen and processed but didn't match, unless explicitly suppressed.
+                if SEND_NO_MATCH_UPDATES:
+                    should_send = True
+                elif not live_search_db.embeddings and faces: # DB empty but saw faces
+                    should_send = True
+                elif live_search_db.embeddings and faces: # DB has entries, saw faces, but none matched
+                    # This is the case where we *should* send a "no_match_found" even if
+                    # SEND_NO_MATCH_UPDATES is false, to give feedback that processing happened.
+                    # Let's make this the default behavior unless a flag *explicitly* suppresses ALL non-match/non-error messages.
+                    # For now, let's simplify: if it's "no_match_found", and SEND_NO_MATCH_UPDATES is FALSE,
+                    # we still send it to avoid silent failures.
+                    # To truly suppress it, a new flag or more complex logic would be needed.
+                    # Let's simplify: always send "no_match_found" if that's the determined status.
+                    # The SEND_NO_MATCH_UPDATES could then be re-purposed for client-side filtering if desired.
+                    should_send = True # Always send if status is no_match_found
+
+            if should_send:
+                logger.debug(f"LiveSearch WS: Sending response: Status={final_response.status}, ProcTime={final_response.processing_time_ms}ms")
+                await websocket.send_json(final_response.model_dump())
+            else:
+                # This case should now be rarer, mainly for "no_face_detected" when SEND_NO_FACE_UPDATES is false.
+                logger.debug(f"LiveSearch WS: Update not sent for status '{final_response.status}'. Proc time: {final_response.processing_time_ms}ms")
+
+            await websocket.send_json(final_response.model_dump())
 
     except WebSocketDisconnect:
         logger.info("WS disconnected: Live Search ended.")
     except Exception as e:
         logger.error(f"Error in Live Search WebSocket: {e}", exc_info=True)
         try:
-            await websocket.close(code=1011, reason=f"Internal server error: {str(e)}")
-        except RuntimeError: pass
+            # Calculate processing time even on error if possible
+            proc_time_on_error = int((time.perf_counter() - frame_processing_start_time) * 1000) if 'frame_processing_start_time' in locals() else None
+            await websocket.send_json(
+                LiveSearchWSResponse(
+                    status="error",
+                    message=f"Internal server error: {str(e)}",
+                    processing_time_ms=proc_time_on_error
+                ).model_dump()
+            )
+            await websocket.close(code=1011)
+        except RuntimeError: # Handle cases where connection is already gone
+            pass
+        except Exception as e2: # Handle errors during error reporting itself
+            logger.error(f"Error trying to send error report over WebSocket: {e2}")

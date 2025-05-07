@@ -395,7 +395,7 @@ def live_search(
 
 @app.command()
 def server(
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host address to bind the server to."),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host address to bind the server to."),
     port: int = typer.Option(8080, "--port", "-p", help="Port number for the API server."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of worker processes (set > 1 for production)."),
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (for development only)."),

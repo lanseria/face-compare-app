@@ -222,6 +222,9 @@
       } else {
         statusText += `Unknown status: ${data.status}`;
       }
+      if (data.processing_time_ms !== undefined) { // Check if it exists
+        statusText += ` (Server Proc: ${data.processing_time_ms}ms)`;
+      }
       statusDiv.textContent = statusText;
       statusDiv.className = statusClass;
     }
