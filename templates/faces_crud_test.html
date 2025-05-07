@@ -1,61 +1,125 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Faces CRUD Test</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .container { margin-bottom: 30px; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
-        h2 { margin-top: 0; }
-        label { display: inline-block; margin-bottom: 5px; }
-        input[type="text"], input[type="file"], textarea {
-            width: 95%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px;
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
         }
-        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px; }
-        button:hover { background-color: #0056b3; }
-        pre { background-color: #f4f4f4; padding: 10px; border: 1px solid #ddd; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto;}
-        .face-item { border-bottom: 1px solid #eee; padding: 10px 0; }
-        .face-item:last-child { border-bottom: none; }
-        .actions button { font-size: 0.8em; padding: 5px 8px; margin-top: 5px;}
+
+        .container {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        label {
+            display: inline-block;
+            margin-bottom: 5px;
+        }
+
+        input[type="text"],
+        input[type="file"],
+        textarea {
+            width: 95%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button.delete-btn {
+            background-color: #dc3545;
+        }
+
+        /* Style for delete button */
+        button.delete-btn:hover {
+            background-color: #c82333;
+        }
+
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .face-item {
+            border-bottom: 1px solid #eee;
+            padding: 10px 0;
+        }
+
+        .face-item:last-child {
+            border-bottom: none;
+        }
+
+        .actions button {
+            font-size: 0.8em;
+            padding: 5px 8px;
+            margin-top: 5px;
+        }
     </style>
 </head>
+
 <body>
 
     <h1>Faces Management (CRUD Test)</h1>
 
-    <!-- Create Face -->
+    <!-- Create Face (as before) -->
     <div class="container">
         <h2>Create New Face Entry</h2>
         <form id="createFaceForm">
             <label for="createName">Name (Optional):</label>
             <input type="text" id="createName" name="name">
-
             <label for="createMeta">Metadata (JSON String, Optional):</label>
-            <textarea id="createMeta" name="meta" rows="3" placeholder='{"department": "R&D", "notes": "VIP"}'></textarea>
-
+            <textarea id="createMeta" name="meta" rows="3"
+                placeholder='{"department": "R&D", "notes": "VIP"}'></textarea>
             <label for="createImage">Image (Required):</label>
             <input type="file" id="createImage" name="image" accept="image/*" required>
-
             <button type="submit">Create Face</button>
         </form>
         <h3>Response:</h3>
         <pre id="createResponse"></pre>
     </div>
 
-    <!-- List Faces -->
+    <!-- List Faces (as before, ensure face.id is used for actions) -->
     <div class="container">
         <h2>List All Face Entries</h2>
         <label for="listModelFilter">Filter by Model Name (Optional):</label>
         <input type="text" id="listModelFilter" placeholder="e.g., buffalo_s">
         <button id="listFacesBtn">Load Faces</button>
-        <div id="facesList">
-            <!-- Face items will be populated here -->
-        </div>
+        <div id="facesList"></div>
         <h3>Raw Response:</h3>
         <pre id="listResponse"></pre>
     </div>
 
-    <!-- Get Single Face -->
+    <!-- Get Single Face (as before) -->
     <div class="container">
         <h2>Get Single Face Entry</h2>
         <label for="getFaceId">Face ID (UUID):</label>
@@ -65,251 +129,226 @@
         <pre id="getResponse"></pre>
     </div>
 
-    <!-- Update Face -->
+    <!-- Update Face (as before) -->
     <div class="container">
         <h2>Update Face Entry</h2>
         <form id="updateFaceForm">
             <label for="updateFaceId">Face ID to Update (UUID, Required):</label>
             <input type="text" id="updateFaceId" name="face_id_path" required>
-
-            <label for="updateName">New Name (Optional, leave blank to keep current):</label>
+            <label for="updateName">New Name (Optional):</label>
             <input type="text" id="updateName" name="name">
-
             <label for="updateMeta">New Metadata (JSON String, Optional, "" or "null" to clear):</label>
             <textarea id="updateMeta" name="meta" rows="3" placeholder='{"department": "Sales"}'></textarea>
-
             <label for="updateImage">New Image (Optional, to update features):</label>
             <input type="file" id="updateImage" name="image" accept="image/*">
-
             <button type="submit">Update Face</button>
         </form>
         <h3>Response:</h3>
         <pre id="updateResponse"></pre>
     </div>
 
-    <!-- Delete Face (Placeholder) -->
+    <!-- Delete Face -->
     <div class="container">
-        <h2>Delete Face Entry (Placeholder)</h2>
+        <h2>Delete Face Entry</h2>
         <label for="deleteFaceId">Face ID to Delete (UUID):</label>
         <input type="text" id="deleteFaceId" name="delete_face_id">
-        <button id="deleteFaceBtn">Delete Face (Not Implemented Yet)</button>
+        <button id="deleteFaceBtn" class="delete-btn">Delete Face</button> <!-- Added class for styling -->
         <h3>Response:</h3>
         <pre id="deleteResponse"></pre>
     </div>
 
 
-<script>
-    const API_BASE_URL = "/api/v1/faces";
+    <script>
+        const API_BASE_URL = "/api/v1/faces";
 
-    // Helper to display responses
-    function displayResponse(elementId, data) {
-        document.getElementById(elementId).textContent = JSON.stringify(data, null, 2);
-    }
-
-    // Create Face
-    document.getElementById('createFaceForm').addEventListener('submit', async function(event) {
-        event.preventDefault();
-        const formData = new FormData(this);
-        const responseElement = document.getElementById('createResponse');
-        responseElement.textContent = 'Processing...';
-
-        try {
-            const response = await fetch(API_BASE_URL, {
-                method: 'POST',
-                body: formData // FastAPI handles FormData for File and Form fields
-            });
-            const result = await response.json();
-            displayResponse('createResponse', result);
-            if (response.ok) {
-                alert('Face created successfully! ID: ' + result.id);
-                document.getElementById('listFacesBtn').click(); // Refresh list
-            } else {
-                alert('Error creating face: ' + (result.detail || 'Unknown error'));
+        function displayResponse(elementId, data, isError = false) {
+            const element = document.getElementById(elementId);
+            if (typeof data === 'string' && isError) { // For simple error messages not in JSON
+                element.textContent = data;
+            } else if (data === null || data === undefined || (typeof data === 'object' && Object.keys(data).length === 0 && !isError && data !== null)) { // Handle 204 No Content or empty success
+                element.textContent = isError ? 'Error: Empty or malformed response' : 'Success (No Content)';
             }
-        } catch (error) {
-            console.error('Create Face Error:', error);
-            responseElement.textContent = 'Error: ' + error.message;
-            alert('Network or script error creating face.');
-        }
-    });
-
-    // List Faces
-    document.getElementById('listFacesBtn').addEventListener('click', async function() {
-        const facesListDiv = document.getElementById('facesList');
-        const responseElement = document.getElementById('listResponse');
-        const modelFilter = document.getElementById('listModelFilter').value.trim();
-        facesListDiv.innerHTML = 'Loading...';
-        responseElement.textContent = 'Processing...';
-
-        let url = API_BASE_URL + `?limit=50`; // Add a limit
-        if (modelFilter) {
-            url += `&model_name=${encodeURIComponent(modelFilter)}`;
+            else {
+                element.textContent = JSON.stringify(data, null, 2);
+            }
         }
 
-        try {
-            const response = await fetch(url);
-            const result = await response.json();
-            displayResponse('listResponse', result);
-            facesListDiv.innerHTML = ''; // Clear previous
-            if (response.ok) {
-                if (result.length === 0) {
-                    facesListDiv.innerHTML = '<p>No faces found.</p>';
-                    return;
-                }
-                result.forEach(face => {
-                    const item = document.createElement('div');
-                    item.className = 'face-item';
-                    let embeddingsText = 'No embeddings info';
-                    if (face.embeddings_info && face.embeddings_info.length > 0) {
-                        embeddingsText = face.embeddings_info.map(emb => `${emb.model_name} (at ${new Date(emb.created_at).toLocaleString()})`).join(', ');
-                    }
-                    item.innerHTML = `
-                        <strong>ID:</strong> ${face.id}<br>
+        // Create Face (JS as before)
+        document.getElementById('createFaceForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+            const responseElement = document.getElementById('createResponse');
+            responseElement.textContent = 'Processing...';
+            try {
+                const response = await fetch(API_BASE_URL, { method: 'POST', body: formData });
+                const result = await response.json();
+                displayResponse('createResponse', result);
+                if (response.ok) {
+                    alert('Face created successfully! ID: ' + result.id);
+                    document.getElementById('listFacesBtn').click();
+                } else { alert('Error creating face: ' + (result.detail || 'Unknown error')); }
+            } catch (error) { displayResponse('createResponse', 'Error: ' + error.message, true); alert('Network or script error.'); }
+        });
+
+        // List Faces (JS - ensure using face.id for populate functions)
+        document.getElementById('listFacesBtn').addEventListener('click', async function () {
+            const facesListDiv = document.getElementById('facesList');
+            const responseElement = document.getElementById('listResponse');
+            const modelFilter = document.getElementById('listModelFilter').value.trim();
+            facesListDiv.innerHTML = 'Loading...';
+            responseElement.textContent = 'Processing...';
+            let url = API_BASE_URL + `?limit=50`;
+            if (modelFilter) url += `&model_name=${encodeURIComponent(modelFilter)}`;
+            try {
+                const response = await fetch(url);
+                const result = await response.json();
+                displayResponse('listResponse', result);
+                facesListDiv.innerHTML = '';
+                if (response.ok) {
+                    if (result.length === 0) { facesListDiv.innerHTML = '<p>No faces found.</p>'; return; }
+                    result.forEach(face => { // Assuming result is List[PersonResponse]
+                        const item = document.createElement('div');
+                        item.className = 'face-item';
+                        // Use face.person_id as per PersonResponse model, which aliases 'id' from DB.
+                        // If your DB functions directly return 'id' and Pydantic aliases it, face.person_id is correct.
+                        // If PersonResponse model uses 'id' then use face.id.
+                        // Based on your previous model, PersonResponse uses person_id.
+                        // However, your DB `get_all_faces` returns `id`. Let's assume PersonResponse handles the aliasing.
+                        // If not, use `face.id` directly here. For consistency, let's use `face.person_id` as per the Pydantic model.
+                        const displayId = face.person_id || face.id; // Fallback if aliasing is tricky
+
+                        let embeddingsText = 'No embeddings info';
+                        if (face.embeddings_info && face.embeddings_info.length > 0) {
+                            embeddingsText = face.embeddings_info.map(emb => `${emb.model_name} (at ${new Date(emb.created_at).toLocaleString()})`).join(', ');
+                        }
+                        item.innerHTML = `
+                        <strong>ID:</strong> ${displayId}<br>
                         <strong>Name:</strong> ${face.name || 'N/A'}<br>
                         <strong>Model(s):</strong> ${embeddingsText}<br> 
                         <strong>Meta:</strong> ${face.metadata ? JSON.stringify(face.metadata) : 'N/A'}<br>
                         <strong>Created:</strong> ${new Date(face.created_at).toLocaleString()}<br>
                         <strong>Updated:</strong> ${new Date(face.updated_at).toLocaleString()}<br>
                         <div class="actions">
-                            <button onclick="populateGetForm('${face.person_id}')">View Details</button>
-                            <button onclick="populateUpdateForm('${face.person_id}', '${face.name || ''}', '${face.metadata ? JSON.stringify(face.metadata).replace(/"/g, '"') : ''}')">Edit</button>
-                            <button onclick="populateDeleteForm('${face.person_id}')">Delete (UI Only)</button>
+                            <button onclick="populateGetForm('${displayId}')">View Details</button>
+                            <button onclick="populateUpdateForm('${displayId}', '${face.name || ''}', '${face.metadata ? JSON.stringify(face.metadata).replace(/"/g, '"') : ''}')">Edit</button>
+                            <button class="delete-btn" onclick="confirmDeleteFace('${displayId}')">Delete</button> <!-- Changed -->
                         </div>
                     `;
-                    facesListDiv.appendChild(item);
+                        facesListDiv.appendChild(item);
+                    });
+                } else { facesListDiv.innerHTML = `<p style="color:red;">Error: ${result.detail || 'Unknown'}</p>`; }
+            } catch (error) { displayResponse('listResponse', 'Error: ' + error.message, true); facesListDiv.innerHTML = '<p style="color:red;">Network error.</p>'; }
+        });
+
+        // Get Single Face (JS as before)
+        document.getElementById('getFaceBtn').addEventListener('click', async function () {
+            const faceId = document.getElementById('getFaceId').value.trim();
+            const responseElement = document.getElementById('getResponse');
+            if (!faceId) { alert('Please enter a Face ID.'); return; }
+            responseElement.textContent = 'Processing...';
+            try {
+                const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`);
+                const result = await response.json(); // Expects JSON even for errors from HTTPException
+                displayResponse('getResponse', result, !response.ok);
+            } catch (error) { displayResponse('getResponse', 'Error: ' + error.message, true); }
+        });
+        function populateGetForm(faceId) { /* as before */
+            document.getElementById('getFaceId').value = faceId;
+            document.getElementById('getFaceBtn').click();
+            window.scrollTo(0, document.getElementById('getFaceBtn').closest('.container').offsetTop - 20);
+        }
+
+
+        // Update Face (JS as before)
+        document.getElementById('updateFaceForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const faceId = document.getElementById('updateFaceId').value.trim();
+            if (!faceId) { alert('Please enter Face ID to update.'); return; }
+            const responseElement = document.getElementById('updateResponse');
+            responseElement.textContent = 'Processing...';
+            const formData = new FormData();
+            const nameInput = document.getElementById('updateName').value;
+            const metaInput = document.getElementById('updateMeta').value;
+            const imageFile = document.getElementById('updateImage').files[0];
+            if (nameInput) formData.append('name', nameInput);
+            if (metaInput !== "" && metaInput !== null) formData.append('meta', metaInput);
+            else if (metaInput === "") formData.append('meta', "");
+            if (imageFile) formData.append('image', imageFile);
+            if (!nameInput && metaInput === "" && !imageFile && metaInput !== null) {
+                alert("Provide name, metadata, or image."); responseElement.textContent = 'No update data.'; return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, { method: 'PUT', body: formData });
+                const result = await response.json();
+                displayResponse('updateResponse', result, !response.ok);
+                if (response.ok) { alert('Face updated!'); document.getElementById('listFacesBtn').click(); }
+                else { alert('Error updating face: ' + (result.detail || 'Unknown')); }
+            } catch (error) { displayResponse('updateResponse', 'Error: ' + error.message, true); alert('Network error.'); }
+        });
+        function populateUpdateForm(faceId, name, metaJsonString) { /* as before */
+            document.getElementById('updateFaceId').value = faceId;
+            document.getElementById('updateName').value = name === 'N/A' ? '' : name;
+            document.getElementById('updateMeta').value = metaJsonString === 'N/A' ? '' : metaJsonString.replace(/"/g, '"');
+            document.getElementById('updateImage').value = '';
+            window.scrollTo(0, document.getElementById('updateFaceForm').closest('.container').offsetTop - 20);
+        }
+
+        // --- IMPLEMENTED DELETE ---
+        document.getElementById('deleteFaceBtn').addEventListener('click', async function () {
+            const faceId = document.getElementById('deleteFaceId').value.trim();
+            const responseElement = document.getElementById('deleteResponse');
+            if (!faceId) {
+                alert('Please enter a Face ID to delete.');
+                return;
+            }
+            if (!confirm(`Are you sure you want to delete face ID: ${faceId}?`)) {
+                return;
+            }
+            responseElement.textContent = 'Processing...';
+            try {
+                const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, {
+                    method: 'DELETE'
                 });
-            } else {
-                facesListDiv.innerHTML = `<p style="color:red;">Error loading faces: ${result.detail || 'Unknown error'}</p>`;
+                if (response.status === 204) { // Successfully deleted (No Content)
+                    displayResponse('deleteResponse', { message: `Face ID ${faceId} deleted successfully.` });
+                    alert(`Face ID ${faceId} deleted successfully.`);
+                    document.getElementById('listFacesBtn').click(); // Refresh list
+                    document.getElementById('deleteFaceId').value = ''; // Clear input
+                } else { // Handle other statuses like 404 or 500
+                    const result = await response.json(); // Try to parse error detail
+                    displayResponse('deleteResponse', result, true);
+                    alert(`Error deleting face: ${result.detail || response.statusText}`);
+                }
+            } catch (error) { // Network errors
+                console.error('Delete Face Error:', error);
+                displayResponse('deleteResponse', { error: error.message }, true);
+                alert('Network or script error deleting face.');
             }
-        } catch (error) {
-            console.error('List Faces Error:', error);
-            responseElement.textContent = 'Error: ' + error.message;
-            facesListDiv.innerHTML = '<p style="color:red;">Network or script error listing faces.</p>';
+        });
+
+        function confirmDeleteFace(faceId) { // Helper function for list items
+            document.getElementById('deleteFaceId').value = faceId;
+            // Scroll to the delete section
+            const deleteSection = document.getElementById('deleteFaceBtn').closest('.container');
+            window.scrollTo(0, deleteSection.offsetTop - 20);
+            // You can directly call the delete logic or just populate and let user click main button
+            // For now, it just populates. User clicks the main "Delete Face" button.
+            // Or, to make it more direct:
+            // if (confirm(`Are you sure you want to delete face ID: ${faceId}? This action cannot be undone.`)) {
+            //     document.getElementById('deleteFaceBtn').click(); // Trigger the main delete button's logic
+            // }
         }
-    });
-
-    // Get Single Face
-    document.getElementById('getFaceBtn').addEventListener('click', async function() {
-        const faceId = document.getElementById('getFaceId').value.trim();
-        const responseElement = document.getElementById('getResponse');
-        if (!faceId) {
-            alert('Please enter a Face ID.');
-            return;
-        }
-        responseElement.textContent = 'Processing...';
-        try {
-            const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`);
-            const result = await response.json();
-            displayResponse('getResponse', result);
-        } catch (error) {
-            console.error('Get Face Error:', error);
-            responseElement.textContent = 'Error: ' + error.message;
-        }
-    });
-    
-    function populateGetForm(faceId) {
-        document.getElementById('getFaceId').value = faceId;
-        document.getElementById('getFaceBtn').click();
-        window.scrollTo(0, document.getElementById('getFaceBtn').offsetTop - 100);
-    }
-
-    // Update Face
-    document.getElementById('updateFaceForm').addEventListener('submit', async function(event) {
-        event.preventDefault();
-        const faceId = document.getElementById('updateFaceId').value.trim();
-        if (!faceId) {
-            alert('Please enter the Face ID to update.');
-            return;
-        }
-        const responseElement = document.getElementById('updateResponse');
-        responseElement.textContent = 'Processing...';
-        
-        const formData = new FormData();
-        const nameInput = document.getElementById('updateName').value;
-        const metaInput = document.getElementById('updateMeta').value; // Allow empty string
-        const imageFile = document.getElementById('updateImage').files[0];
-
-        if (nameInput) formData.append('name', nameInput);
-        // Only append meta if it's not empty, or if it's an empty string (to clear)
-        // The server handles "" or "null" for clearing. If field is omitted, no change.
-        if (metaInput !== "" && metaInput !== null) formData.append('meta', metaInput); 
-        else if (metaInput === "") formData.append('meta', ""); // Send empty string to clear
-
-        if (imageFile) formData.append('image', imageFile);
-
-        if (!nameInput && metaInput === "" && !imageFile && metaInput !== null) {
-             alert("Please provide name, metadata, or an image to update.");
-             responseElement.textContent = 'No update data provided.';
-             return;
+        function populateDeleteForm(faceId) { // Renamed to match other populate functions
+            document.getElementById('deleteFaceId').value = faceId;
+            window.scrollTo(0, document.getElementById('deleteFaceBtn').closest('.container').offsetTop - 20);
         }
 
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, {
-                method: 'PUT',
-                body: formData
-            });
-            const result = await response.json();
-            displayResponse('updateResponse', result);
-            if (response.ok) {
-                alert('Face updated successfully!');
-                document.getElementById('listFacesBtn').click(); // Refresh list
-            } else {
-                alert('Error updating face: ' + (result.detail || 'Unknown error'));
-            }
-        } catch (error) {
-            console.error('Update Face Error:', error);
-            responseElement.textContent = 'Error: ' + error.message;
-            alert('Network or script error updating face.');
-        }
-    });
-
-    function populateUpdateForm(faceId, name, metaJsonString) {
-        document.getElementById('updateFaceId').value = faceId;
-        document.getElementById('updateName').value = name === 'N/A' ? '' : name;
-        document.getElementById('updateMeta').value = metaJsonString === 'N/A' ? '' : metaJsonString.replace(/"/g, '"');
-        document.getElementById('updateImage').value = ''; // Clear file input
-        window.scrollTo(0, document.getElementById('updateFaceForm').offsetTop - 100);
-    }
-    
-    // Delete Face (UI Placeholder)
-    document.getElementById('deleteFaceBtn').addEventListener('click', function() {
-        const faceId = document.getElementById('deleteFaceId').value.trim();
-        const responseElement = document.getElementById('deleteResponse');
-        if (!faceId) {
-            alert('Please enter a Face ID to delete.');
-            return;
-        }
-        responseElement.textContent = `Simulating delete for ID: ${faceId}. Implement server-side DELETE endpoint.`;
-        alert('Delete functionality is not yet implemented on the server.');
-        // When implemented:
-        // try {
-        //     const response = await fetch(`${API_BASE_URL}/${encodeURIComponent(faceId)}`, { method: 'DELETE' });
-        //     if (response.ok) { // Or 204 No Content
-        //         displayResponse('deleteResponse', { message: `Face ID ${faceId} deleted (or request sent).` });
-        //         document.getElementById('listFacesBtn').click(); // Refresh list
-        //     } else {
-        //         const result = await response.json();
-        //         displayResponse('deleteResponse', result);
-        //     }
-        // } catch (error) {
-        //     console.error('Delete Face Error:', error);
-        //     displayResponse('deleteResponse', { error: error.message });
-        // }
-    });
-
-    function populateDeleteForm(faceId) {
-        document.getElementById('deleteFaceId').value = faceId;
-        window.scrollTo(0, document.getElementById('deleteFaceBtn').offsetTop - 100);
-    }
-
-
-    // Initial load of faces
-    window.onload = () => {
-        document.getElementById('listFacesBtn').click();
-    };
-
-</script>
+        // Initial load of faces
+        window.onload = () => {
+            document.getElementById('listFacesBtn').click();
+        };
+    </script>
 
 </body>
+
 </html>

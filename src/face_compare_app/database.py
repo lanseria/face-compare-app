@@ -209,4 +209,20 @@ def get_all_faces_from_db(db_path: Path, model_name_filter: Optional[str] = None
     except sqlite3.Error as e:
         raise DatabaseError(f"Could not retrieve faces from database for search: {e}")
 
-# TODO: Add delete_face_by_id(db_path, face_id)
+def delete_face_by_id(db_path: Path, face_id: str) -> bool:
+    """Deletes a face record by its ID. Returns True if deleted, False if not found."""
+    logger.info(f"Attempting to delete face ID='{face_id}' from database: {db_path}")
+    try:
+        with _get_connection(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM faces WHERE id = ?", (face_id,))
+            conn.commit()
+            if cursor.rowcount > 0:
+                logger.info(f"Successfully deleted face ID='{face_id}'.")
+                return True
+            else:
+                logger.warning(f"Face ID='{face_id}' not found for deletion.")
+                return False
+    except sqlite3.Error as e:
+        logger.error(f"Error deleting face ID='{face_id}': {e}")
+        raise DatabaseError(f"Could not delete face ID='{face_id}': {e}")

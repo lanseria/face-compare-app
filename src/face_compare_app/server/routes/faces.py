@@ -8,7 +8,8 @@ import uuid # For generating ID
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, Query, Body, Response, status # Added Response, status
+
 
 # Updated models
 from ..models import FaceInsertResponse, FaceUpdateResponse, PersonResponse, FaceInsertData, FaceUpdateData
@@ -197,4 +198,26 @@ async def api_get_face(
     except DatabaseError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e.message}")
 
-# TODO: Add DELETE /api/v1/faces/{face_id} endpoint
+
+# --- DELETE /api/v1/faces/{face_id} (Delete a face entry) ---
+@router.delete("/{face_id}", status_code=status.HTTP_204_NO_CONTENT) # Use 204 No Content for successful delete
+async def api_delete_face_entry(
+    face_id: str, # Path parameter (UUID string)
+    db_path: Path = Depends(get_database_path)
+):
+    logger.info(f"Request to delete face ID '{face_id}'.")
+    try:
+        deleted = db_func.delete_face_by_id(db_path, face_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Face with ID '{face_id}' not found.")
+        # For 204 No Content, we don't return a body.
+        # FastAPI handles this if the function returns None or no explicit Response.
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except DatabaseError as e:
+        # Log the full error for server-side debugging
+        logger.error(f"Database error during deletion of face ID '{face_id}': {e}", exc_info=True)
+        # Return a generic error to the client
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database error: Could not delete face entry.")
+    except Exception as e:
+        logger.error(f"Unexpected error deleting face ID '{face_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while deleting face entry.")
