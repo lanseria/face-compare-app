@@ -70,3 +70,8 @@ pyproject.toml     # Project configuration
 ## License
 
 MIT
+
+## 参考
+
+https://github.com/deepinsight/insightface
+https://github.com/deepinsight/insightface/tree/master/model_zoo
